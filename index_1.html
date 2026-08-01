@@ -1,0 +1,1134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pitch Log</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/react@18/umd/react.production.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+    :root {
+      --bg: #f5f4f0; --card: #fff; --card2: #eceae4;
+      --border: rgba(0,0,0,.08); --border-s: rgba(0,0,0,.14);
+      --text: #1a1a1a; --text2: #6b6560; --text3: #9a9590;
+      --radius: 8px;
+      --acc: #BA7517; --acc-bg: #FAEEDA; --acc-bo: #EF9F27;
+      --ok: #166534; --ok-bg: #dcfce7; --ok-bo: #86efac;
+      --err: #991b1b; --err-bg: #fee2e2; --err-bo: #fca5a5;
+      --info: #1e40af; --info-bg: #dbeafe; --info-bo: #93c5fd;
+      --sent-bg: #FAEEDA; --sent-co: #BA7517; --sent-bo: #EF9F27;
+      --hold-bg: #dbeafe; --hold-co: #1e40af; --hold-bo: #93c5fd;
+      --passed-bg: #f3f4f6; --passed-co: #6b7280; --passed-bo: #d1d5db;
+      --cut-bg: #dcfce7; --cut-co: #166534; --cut-bo: #86efac;
+    }
+    input, select, textarea, button { font-family: inherit; font-size: 14px; }
+    .inp { width: 100%; padding: 8px 10px; color: var(--text); background: var(--card); border: 0.5px solid var(--border-s); border-radius: var(--radius); outline: none; }
+    .inp:focus { border-color: var(--acc); box-shadow: 0 0 0 3px rgba(186,117,23,.1); }
+    .lbl { display: block; font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: 1px; color: var(--text2); margin-bottom: 6px; }
+    .btn { display: inline-flex; align-items: center; gap: 5px; padding: 7px 13px; font-size: 13px; font-weight: 500; border-radius: var(--radius); cursor: pointer; border: 0.5px solid; }
+    .btn:hover { opacity: .88; }
+    .btn-acc { background: var(--acc-bg); color: var(--acc); border-color: var(--acc-bo); }
+    .btn-sec { background: var(--card2); color: var(--text2); border-color: var(--border-s); }
+    .btn-dan { background: var(--err-bg); color: var(--err); border-color: var(--err-bo); }
+    .btn-pro { background: var(--info-bg); color: var(--info); border-color: var(--info-bo); }
+    .card { background: var(--card); border: 0.5px solid var(--border); border-radius: 12px; padding: 20px; }
+    .chip { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; border: 0.5px solid; }
+    .metric { background: var(--card2); border-radius: var(--radius); padding: 12px 14px; }
+    .header { background: var(--card); border-bottom: 0.5px solid var(--border); padding: 14px 24px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 100; }
+    .main { max-width: 820px; margin: 0 auto; padding: 28px 20px; }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .span2 { grid-column: span 2; }
+    .list { display: flex; flex-direction: column; gap: 8px; }
+    .list-item { background: var(--card); border: 0.5px solid var(--border); border-radius: 12px; padding: 13px 15px; display: flex; align-items: center; gap: 12px; }
+    .empty { text-align: center; padding: 56px 0; color: var(--text3); }
+    .sec-title { font-size: 12px; font-weight: 500; text-transform: uppercase; letter-spacing: 1px; color: var(--text2); margin-bottom: 14px; }
+    .filter-row { display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 18px; }
+    .stale-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--err); margin-right: 4px; vertical-align: middle; }
+    .dropzone { border: 2px dashed var(--border-s); border-radius: 12px; padding: 36px 20px; text-align: center; color: var(--text2); background: var(--card); cursor: pointer; transition: border-color .15s, background .15s; }
+    .dropzone.drag { border-color: var(--acc); background: var(--acc-bg); }
+    .review-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .review-table th { text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: var(--text3); padding: 6px 8px; border-bottom: 1px solid var(--border-s); white-space: nowrap; }
+    .review-table td { padding: 5px 8px; border-bottom: 0.5px solid var(--border); vertical-align: top; }
+    .review-table input, .review-table select, .review-table textarea { font-size: 12px; padding: 5px 6px; }
+    .flag-row { background: var(--err-bg); }
+    .urgency-pill { display:inline-block; padding:2px 7px; border-radius:4px; font-size:10px; font-weight:600; letter-spacing:.3px; }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<div id="errbanner" style="display:none;position:fixed;top:0;left:0;right:0;background:#fee2e2;color:#991b1b;padding:14px 20px;font-family:monospace;font-size:12px;z-index:9999;border-bottom:2px solid #fca5a5;white-space:pre-wrap;max-height:35vh;overflow:auto"></div>
+<script>
+window.onerror = function(msg,src,line,col,err){
+  var b=document.getElementById('errbanner');
+  b.style.display='block';
+  b.textContent='JS Error: '+msg+'\n(line '+line+')\n'+(err&&err.stack?err.stack:'');
+};
+window.onunhandledrejection = function(e){
+  var b=document.getElementById('errbanner');
+  b.style.display='block';
+  b.textContent='Promise error: '+(e.reason&&e.reason.message?e.reason.message:String(e.reason));
+};
+</script>
+<script>
+// ── CONFIG ────────────────────────────────────────────────────────────────────
+const SUPABASE_URL      = 'https://ydxriywpkkdptwcuqaaj.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlkeHJpeXdwa2tkcHR3Y3VxYWFqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg1Njc5NjYsImV4cCI6MjA5NDE0Mzk2Nn0.SYACMatBKKEZV0Wo3rJ6iPSzt0E14qXjT2DieUsG9Zk';
+// ─────────────────────────────────────────────────────────────────────────────
+
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const { useState, useEffect } = React;
+const h = React.createElement;
+
+// ── CONSTANTS ─────────────────────────────────────────────────────────────────
+const STATUS_CFG = {
+  sent:   { label:'Sent',   bg:'var(--sent-bg)',   co:'var(--sent-co)',   bo:'var(--sent-bo)'   },
+  hold:   { label:'Hold',   bg:'var(--hold-bg)',   co:'var(--hold-co)',   bo:'var(--hold-bo)'   },
+  passed: { label:'Passed', bg:'var(--passed-bg)', co:'var(--passed-co)', bo:'var(--passed-bo)' },
+  cut:    { label:'Cut ✓',  bg:'var(--cut-bg)',    co:'var(--cut-co)',    bo:'var(--cut-bo)'    },
+};
+const ROLES = ['Manager','A&R','Publisher / Creative','Label Executive','Sync Agent','Other'];
+const STALE_DAYS = 90;
+
+// ── UTILS ─────────────────────────────────────────────────────────────────────
+function genId(){ return Date.now().toString(36)+Math.random().toString(36).slice(2); }
+function daysSince(d){ return d?Math.floor((Date.now()-new Date(d))/86400000):999; }
+function fmtDate(d){ if(!d)return'—'; return new Date(d).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}); }
+function isStale(p){ return p.status==='sent'&&daysSince(p.dateSent)>=STALE_DAYS; }
+
+// ── SHEET IMPORT: PARSING ENGINE ──────────────────────────────────────────────
+const MONTH_MAP = { jan:0,january:0, feb:1,february:1, mar:2,march:2, apr:3,april:3, may:4,
+  jun:5,june:5, jul:6,july:6, aug:7,august:7, sep:8,sept:8,september:8, oct:9,october:9,
+  nov:10,november:10, dec:11,december:11 };
+const URGENCY_ORDER = { date:0, high:1, soon:2, medium:3, low:4, unclear:5 };
+const URGENCY_LABELS = { date:'Dated', high:'Top priority', soon:'Soon', medium:'Looking', low:'On hold / vague', unclear:'Unclear' };
+
+// Given free text like "CUTTING AUG 29TH." or "CUT JULY 29TH AND 30TH TO FINISH" or "AUG 20TH",
+// try to find a month + day and build an ISO date using refYear. Returns null if no date found.
+function extractDateFromText(text, refYear){
+  if(!text) return null;
+  var re=/\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sept?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+(\d{1,2})(?:st|nd|rd|th)?\b/i;
+  var m=text.match(re);
+  if(!m) return null;
+  var monthKey=m[1].toLowerCase().replace('.','');
+  var monthIdx=MONTH_MAP[monthKey];
+  if(monthIdx===undefined){
+    // try trimmed 3-letter key
+    monthIdx=MONTH_MAP[monthKey.slice(0,3)];
+  }
+  if(monthIdx===undefined) return null;
+  var day=parseInt(m[2],10);
+  if(day<1||day>31) return null;
+  var d=new Date(refYear,monthIdx,day);
+  return d.toISOString().slice(0,10);
+}
+
+// Classify urgency from the raw "cut date" cell text when no concrete date is found.
+function classifyUrgency(text){
+  if(!text) return 'unclear';
+  var t=text.toLowerCase();
+  if(/\b(now|top priority|asap|immediately)\b/.test(t)) return 'high';
+  if(/\bsoon\b/.test(t)) return 'soon';
+  if(/\b(tba|tbd|on hold|not sure|no info)\b/.test(t)) return 'low';
+  if(/\b(looking|cutting|co.?writing|wrapping up|cut before)\b/.test(t)) return 'medium';
+  return 'unclear';
+}
+
+function parseCutDateCell(rawText, refYear){
+  var iso=extractDateFromText(rawText, refYear);
+  return { raw:(rawText||'').trim(), isoDate:iso, urgency: iso?'date':classifyUrgency(rawText) };
+}
+
+// Score whether an artist looks open to outside songs vs. writes/closes their own, based on
+// free text in the "looking for" and "cut date" columns. Returns 'open' | 'closed' | 'unclear'.
+function scoreSelfPenned(text){
+  if(!text) return 'unclear';
+  var t=text.toLowerCase();
+  var openRe=/outside song|outside material|listen to outside|cutting \d+ outside|open to outside|will take (starts|hooks)|send songs|will listen/;
+  var closedRe=/will write (most|it|the)|only doing co.?writes|is a writer\b|writes (his|her|their) own|no outside|closed to outside/;
+  var open=openRe.test(t), closed=closedRe.test(t);
+  if(open&&!closed) return 'open';
+  if(closed&&!open) return 'closed';
+  return 'unclear';
+}
+
+// Pull {name,email} pairs out of a messy multi-contact block like:
+// "FORREST LATTA forrest@averagejoesent.com   MIKE WADSWORTH mike@averagejoesent.com"
+function extractContactsFromText(text){
+  if(!text) return [];
+  var emailRe=/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/g;
+  var found=[]; var m;
+  while((m=emailRe.exec(text))){ found.push({email:m[1], index:m.index, len:m[0].length}); }
+  if(found.length===0) return [];
+  var contacts=[]; var cursor=0;
+  found.forEach(function(e){
+    var chunk=text.slice(cursor,e.index).replace(/[\n\r]+/g,' ').replace(/\s+/g,' ').trim();
+    var nameMatch=chunk.match(/([A-Z][A-Za-z.'-]*(?:\s+[A-Z][A-Za-z.'-]*){0,3})\s*\(?\s*$/);
+    var name=nameMatch?nameMatch[1].trim():chunk.slice(-40).trim();
+    contacts.push({ name:name||'', email:e.email });
+    cursor=e.index+e.len;
+  });
+  return contacts;
+}
+
+// Turn a raw sheet-of-arrays (as produced by XLSX with {header:1}) into a flat list of
+// classified rows: label headers (a record label / roster grouping) and artist entries.
+// Assumes the AUG/SEPT-style layout: col0 Artist, col1 Producer, col2 A&R/contact block,
+// col3 Cut date, col4 Looking for, col5 Management.
+function classifyTipSheetRows(rawRows, refYear){
+  function cell(row,i){ var v=row[i]; return (v===undefined||v===null)?'':String(v).trim(); }
+  // find header row: first row containing 'ARTIST' in col0 or col1
+  var startIdx=0;
+  for(var i=0;i<rawRows.length;i++){
+    var c0=cell(rawRows[i],0).toUpperCase();
+    if(c0==='ARTIST'){ startIdx=i+1; break; }
+  }
+  var out=[]; var currentLabel='';
+  for(var r=startIdx;r<rawRows.length;r++){
+    var row=rawRows[r];
+    var artist=cell(row,0), producer=cell(row,1), ar=cell(row,2), cutRaw=cell(row,3), lookingFor=cell(row,4), mgmt=cell(row,5);
+    var allBlank = !artist&&!producer&&!ar&&!cutRaw&&!lookingFor&&!mgmt;
+    if(allBlank) continue;
+    var isLabelRow = artist && !ar && !cutRaw && !lookingFor;
+    if(isLabelRow){
+      currentLabel=artist.replace(/:\s*\d[\d\-\s]*$/,'').trim(); // strip trailing phone numbers
+      continue;
+    }
+    var flagged = !artist;
+    var cd=parseCutDateCell(cutRaw, refYear);
+    var contacts=extractContactsFromText(ar);
+    var penned=scoreSelfPenned([lookingFor,cutRaw].filter(Boolean).join(' '));
+    out.push({
+      _tmpId: genId(),
+      label: currentLabel,
+      artistName: artist || '(unclear — see label "'+currentLabel+'")',
+      producer: producer,
+      contactRaw: ar,
+      contacts: contacts,
+      cutDateRaw: cd.raw,
+      cutDate: cd.isoDate,
+      urgency: cd.urgency,
+      lookingFor: lookingFor,
+      management: mgmt,
+      selfPenned: penned,
+      flagged: flagged
+    });
+  }
+  return out;
+}
+
+function sortByPriority(rows){
+  return rows.slice().sort(function(a,b){
+    var oa=URGENCY_ORDER[a.urgency]!==undefined?URGENCY_ORDER[a.urgency]:5;
+    var ob=URGENCY_ORDER[b.urgency]!==undefined?URGENCY_ORDER[b.urgency]:5;
+    if(oa!==ob) return oa-ob;
+    if(a.urgency==='date'&&b.urgency==='date') return (a.cutDate||'').localeCompare(b.cutDate||'');
+    return (a.artistName||'').localeCompare(b.artistName||'');
+  });
+}
+
+const SORT_OPTIONS = [
+  { key:'priority', label:'Priority (default)' },
+  { key:'date',     label:'Cut date' },
+  { key:'name',     label:'Artist name' },
+  { key:'producer', label:'Producer' },
+  { key:'label',    label:'Label' },
+  { key:'urgency',  label:'Urgency' },
+];
+
+// General-purpose sort for the Who's Looking dashboard. `dir` is 1 (asc) or -1 (desc).
+// Blank/undated values are always parked at the end regardless of direction, matching
+// how a spreadsheet sort usually behaves.
+function sortRows(rows,key,dir){
+  if(key==='priority') return dir===-1?sortByPriority(rows).reverse():sortByPriority(rows);
+  var list=rows.slice();
+  function blank(v){ return v===undefined||v===null||v===''; }
+  if(key==='date'){
+    var dated=list.filter(function(r){return !blank(r.cutDate);});
+    var undated=list.filter(function(r){return blank(r.cutDate);});
+    dated.sort(function(a,b){ return dir*a.cutDate.localeCompare(b.cutDate); });
+    undated.sort(function(a,b){ return (a.artistName||'').localeCompare(b.artistName||''); });
+    return dated.concat(undated);
+  }
+  if(key==='urgency'){
+    list.sort(function(a,b){
+      var oa=URGENCY_ORDER[a.urgency]!==undefined?URGENCY_ORDER[a.urgency]:5;
+      var ob=URGENCY_ORDER[b.urgency]!==undefined?URGENCY_ORDER[b.urgency]:5;
+      return dir*(oa-ob);
+    });
+    return list;
+  }
+  var field = key==='name'?'artistName':key==='producer'?'producer':key==='label'?'label':null;
+  if(!field) return list;
+  var withVal=list.filter(function(r){return !blank(r[field]);});
+  var withoutVal=list.filter(function(r){return blank(r[field]);});
+  withVal.sort(function(a,b){ return dir*String(a[field]).localeCompare(String(b[field])); });
+  withoutVal.sort(function(a,b){ return (a.artistName||'').localeCompare(b.artistName||''); });
+  return withVal.concat(withoutVal);
+}
+
+// ── DATA MAPPERS ──────────────────────────────────────────────────────────────
+function dbToPitch(db){
+  return { id:db.id, songTitle:db.song_title||'', artistTarget:db.artist_target||'',
+    contactId:db.contact_id||'', dateSent:db.date_sent||'', status:db.status||'sent',
+    notes:db.notes||'', createdAt:db.created_at, lastUpdated:db.last_updated };
+}
+function pitchToDb(p,userId){
+  return { user_id:userId, song_title:p.songTitle||'', artist_target:p.artistTarget||'',
+    contact_id:p.contactId||null, date_sent:p.dateSent||null, status:p.status||'sent',
+    notes:p.notes||'', last_updated:new Date().toISOString() };
+}
+function dbToContact(db){
+  return { id:db.id, name:db.name||'', role:db.role||'', company:db.company||'',
+    artistConnection:db.artist_connection||'', email:db.email||'', phone:db.phone||'',
+    notes:db.notes||'', lastVerified:db.last_verified||'', createdAt:db.created_at };
+}
+function contactToDb(c,userId){
+  return { user_id:userId, name:c.name||'', role:c.role||'', company:c.company||'',
+    artist_connection:c.artistConnection||'', email:c.email||'', phone:c.phone||'',
+    notes:c.notes||'', last_verified:c.lastVerified||null };
+}
+
+// ── SUPABASE OPS ──────────────────────────────────────────────────────────────
+async function fetchPitches(){
+  var r=await sb.schema('pitch_log').from('pl_pitches').select('*').order('created_at',{ascending:false});
+  if(r.error)throw r.error;
+  return (r.data||[]).map(dbToPitch);
+}
+async function insertPitch(p,userId){
+  var r=await sb.schema('pitch_log').from('pl_pitches').insert(pitchToDb(p,userId));
+  if(r.error)throw r.error;
+}
+async function updatePitch(p,userId){
+  var r=await sb.schema('pitch_log').from('pl_pitches').update(pitchToDb(p,userId)).eq('id',p.id);
+  if(r.error)throw r.error;
+}
+async function removePitch(id){
+  var r=await sb.schema('pitch_log').from('pl_pitches').delete().eq('id',id);
+  if(r.error)throw r.error;
+}
+async function patchPitchStatus(id,status){
+  var r=await sb.schema('pitch_log').from('pl_pitches').update({status:status,last_updated:new Date().toISOString()}).eq('id',id);
+  if(r.error)throw r.error;
+}
+async function fetchContacts(){
+  var r=await sb.schema('pitch_log').from('pl_contacts').select('*').order('name',{ascending:true});
+  if(r.error)throw r.error;
+  return (r.data||[]).map(dbToContact);
+}
+async function insertContact(c,userId){
+  var r=await sb.schema('pitch_log').from('pl_contacts').insert(contactToDb(c,userId));
+  if(r.error)throw r.error;
+}
+async function updateContact(c,userId){
+  var r=await sb.schema('pitch_log').from('pl_contacts').update(contactToDb(c,userId)).eq('id',c.id);
+  if(r.error)throw r.error;
+}
+async function removeContact(id){
+  var r=await sb.schema('pitch_log').from('pl_contacts').delete().eq('id',id);
+  if(r.error)throw r.error;
+}
+
+function dbToSheetRow(db){
+  return { id:db.id, label:db.label||'', artistName:db.artist_name||'', producer:db.producer||'',
+    contacts:db.contacts||[], cutDateRaw:db.cut_date_raw||'', cutDate:db.cut_date||null,
+    urgency:db.urgency||'unclear', lookingFor:db.looking_for||'', management:db.management||'',
+    selfPenned:db.self_penned||'unclear', sourceFile:db.source_file||'', status:db.status||'active',
+    flagged:!!db.flagged, createdAt:db.created_at, lastUpdated:db.last_updated };
+}
+function sheetRowToDb(rrow,userId){
+  return { user_id:userId, label:rrow.label||'', artist_name:rrow.artistName||'', producer:rrow.producer||'',
+    contacts:rrow.contacts||[], cut_date_raw:rrow.cutDateRaw||'', cut_date:rrow.cutDate||null,
+    urgency:rrow.urgency||'unclear', looking_for:rrow.lookingFor||'', management:rrow.management||'',
+    self_penned:rrow.selfPenned||'unclear', source_file:rrow.sourceFile||'', status:rrow.status||'active',
+    flagged:!!rrow.flagged, last_updated:new Date().toISOString() };
+}
+async function fetchArtistSheets(){
+  var r=await sb.schema('pitch_log').from('pl_artist_sheets').select('*').order('cut_date',{ascending:true,nullsFirst:false});
+  if(r.error)throw r.error;
+  return (r.data||[]).map(dbToSheetRow);
+}
+async function insertArtistSheetsBatch(rows,userId,sourceFile){
+  var payload=rows.map(function(rrow){ var d=sheetRowToDb(rrow,userId); d.source_file=sourceFile; return d; });
+  var r=await sb.schema('pitch_log').from('pl_artist_sheets').insert(payload);
+  if(r.error)throw r.error;
+}
+async function updateArtistSheetStatus(id,status){
+  var r=await sb.schema('pitch_log').from('pl_artist_sheets').update({status:status,last_updated:new Date().toISOString()}).eq('id',id);
+  if(r.error)throw r.error;
+}
+async function removeArtistSheet(id){
+  var r=await sb.schema('pitch_log').from('pl_artist_sheets').delete().eq('id',id);
+  if(r.error)throw r.error;
+}
+
+function dbToWritingStats(db){
+  return { id:db.id, artistNameKey:db.artist_name_key, artistName:db.artist_name||'',
+    coWritePct:db.co_write_pct, outsidePct:db.outside_pct, songsSampled:db.songs_sampled||[],
+    confidence:db.confidence||'low', notes:db.notes||'', sources:db.sources||[],
+    researchedAt:db.researched_at };
+}
+async function fetchWritingStats(){
+  var r=await sb.schema('pitch_log').from('pl_artist_writing_stats').select('*');
+  if(r.error)throw r.error;
+  return (r.data||[]).map(dbToWritingStats);
+}
+async function upsertWritingStats(stats,userId){
+  var row={
+    user_id:userId,
+    artist_name_key:stats.artistName.trim().toLowerCase(),
+    artist_name:stats.artistName,
+    co_write_pct:stats.coWritePct,
+    outside_pct:stats.outsidePct,
+    songs_sampled:stats.songsSampled||[],
+    confidence:stats.confidence||'low',
+    notes:stats.notes||'',
+    sources:stats.sources||[],
+    researched_at:new Date().toISOString()
+  };
+  var r=await sb.schema('pitch_log').from('pl_artist_writing_stats').upsert(row,{onConflict:'user_id,artist_name_key'});
+  if(r.error)throw r.error;
+}
+
+// ── AI SEARCH ─────────────────────────────────────────────────────────────────
+async function aiSearchContacts(artist){
+  var r=await fetch('/.netlify/functions/search-contact',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({artist:artist})
+  });
+  if(!r.ok) throw new Error('Search failed ('+r.status+')');
+  return await r.json();
+}
+async function triggerWritingHistoryResearch(artist,userId,accessToken){
+  var r=await fetch('/.netlify/functions/writing-history-background',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({artist:artist,userId:userId,accessToken:accessToken})
+  });
+  if(!r.ok) throw new Error('Could not start research ('+r.status+')');
+}
+
+// ── SHARED COMPONENTS ─────────────────────────────────────────────────────────
+function Badge(props){
+  var s=STATUS_CFG[props.status]||STATUS_CFG.sent;
+  return h('span',{className:'chip',style:{background:s.bg,color:s.co,borderColor:s.bo}},s.label);
+}
+function Btn(props){
+  return h('button',{onClick:props.onClick,disabled:props.disabled,className:'btn btn-'+(props.cls||'sec'),style:props.style},props.children);
+}
+function Avatar(props){
+  var initials=(props.name||'?').split(' ').map(function(n){return n[0]||'';}).join('').slice(0,2).toUpperCase();
+  return h('div',{style:{width:36,height:36,borderRadius:'50%',background:'var(--acc-bg)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:13,fontWeight:600,color:'var(--acc)',flexShrink:0}},initials);
+}
+
+// ── LOGIN ─────────────────────────────────────────────────────────────────────
+function LoginScreen(){
+  var _e=useState(''),email=_e[0],setEmail=_e[1];
+  var _p=useState(''),password=_p[0],setPassword=_p[1];
+  var _l=useState(false),loading=_l[0],setLoading=_l[1];
+  var _err=useState(''),error=_err[0],setError=_err[1];
+  function doLogin(){
+    if(!email||!password){setError('Enter your email and password.');return;}
+    setLoading(true);setError('');
+    sb.auth.signInWithPassword({email:email,password:password}).then(function(r){
+      if(r.error){setError(r.error.message);setLoading(false);}
+    });
+  }
+  return h('div',{style:{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',background:'var(--bg)'}},
+    h('div',{style:{width:'100%',maxWidth:380,padding:'0 20px'}},
+      h('div',{style:{textAlign:'center',marginBottom:32}},
+        h('div',{style:{fontSize:24,fontWeight:700,color:'var(--acc)',letterSpacing:'-.5px'}},'Pitch Log'),
+        h('div',{style:{fontSize:11,textTransform:'uppercase',letterSpacing:'2px',color:'var(--text3)',marginTop:4}},'Song pitching & contact database')
+      ),
+      h('div',{className:'card',style:{padding:28}},
+        error&&h('div',{style:{background:'var(--err-bg)',border:'0.5px solid var(--err-bo)',borderRadius:'var(--radius)',padding:'10px 12px',fontSize:13,color:'var(--err)',marginBottom:14}},error),
+        h('div',{style:{marginBottom:14}},
+          h('label',{className:'lbl'},'Email'),
+          h('input',{className:'inp',type:'email',value:email,onChange:function(e){setEmail(e.target.value);},onKeyDown:function(e){if(e.key==='Enter')doLogin();},placeholder:'you@example.com',autoComplete:'email'})
+        ),
+        h('div',{style:{marginBottom:20}},
+          h('label',{className:'lbl'},'Password'),
+          h('input',{className:'inp',type:'password',value:password,onChange:function(e){setPassword(e.target.value);},onKeyDown:function(e){if(e.key==='Enter')doLogin();},placeholder:'••••••••',autoComplete:'current-password'})
+        ),
+        h('button',{onClick:doLogin,disabled:loading,className:'btn btn-acc',style:{width:'100%',justifyContent:'center',padding:'10px',fontSize:14}},loading?'Signing in...':'Sign in')
+      )
+    )
+  );
+}
+
+// ── PITCHES VIEW ──────────────────────────────────────────────────────────────
+function PitchesView(props){
+  var pitches=props.pitches,contacts=props.contacts,onNew=props.onNew,onEdit=props.onEdit,onDelete=props.onDelete,onStatus=props.onStatus;
+  var _f=useState('all'),filter=_f[0],setFilter=_f[1];
+  var _sf=useState(false),staleOnly=_sf[0],setStaleOnly=_sf[1];
+  var contMap={};
+  contacts.forEach(function(c){contMap[c.id]=c;});
+  var counts={};
+  Object.keys(STATUS_CFG).forEach(function(k){counts[k]=pitches.filter(function(p){return p.status===k;}).length;});
+  var staleCount=pitches.filter(isStale).length;
+  var shown=pitches.filter(function(p){
+    if(staleOnly) return isStale(p);
+    if(filter==='all') return true;
+    return p.status===filter;
+  });
+  return h('div',null,
+    h('div',{style:{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:20}},
+      h('div',null,
+        h('h1',{style:{fontSize:20,fontWeight:600,margin:0}},'Pitches'),
+        h('p',{style:{fontSize:13,color:'var(--text2)',margin:'3px 0 0'}},pitches.length+' total · '+(counts.cut||0)+' cuts'+(staleCount?' · '+staleCount+' need follow-up':''))
+      ),
+      h(Btn,{onClick:onNew,cls:'acc',style:{fontSize:13,padding:'8px 15px'}},'+ New pitch')
+    ),
+    h('div',{style:{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:8,marginBottom:20}},
+      Object.entries(STATUS_CFG).map(function(entry){
+        var k=entry[0],s=entry[1];
+        return h('div',{key:k,className:'metric'},
+          h('div',{style:{fontSize:10,color:'var(--text3)',textTransform:'uppercase',letterSpacing:1,marginBottom:3}},s.label),
+          h('div',{style:{fontSize:22,fontWeight:600,color:s.co}},(counts[k]||0))
+        );
+      })
+    ),
+    h('div',{className:'filter-row'},
+      h('button',{onClick:function(){setFilter('all');setStaleOnly(false);},className:'btn btn-'+(filter==='all'&&!staleOnly?'acc':'sec')},'All'),
+      Object.entries(STATUS_CFG).map(function(entry){
+        var k=entry[0],s=entry[1];
+        return h('button',{key:k,onClick:function(){setFilter(k);setStaleOnly(false);},className:'btn btn-'+(filter===k&&!staleOnly?'acc':'sec')},s.label);
+      }),
+      staleCount>0&&h('button',{onClick:function(){setStaleOnly(function(v){return !v;});setFilter('all');},className:'btn btn-'+(staleOnly?'dan':'sec')},'\u26A0 Follow-up ('+staleCount+')')
+    ),
+    shown.length===0
+      ?h('div',{className:'empty'},
+          h('div',{style:{fontSize:32,marginBottom:12}},'🎵'),
+          h('div',{style:{fontSize:15,color:'var(--text2)',marginBottom:4}},filter==='all'&&!staleOnly?'No pitches yet':'No pitches matching this filter'),
+          filter==='all'&&!staleOnly&&h('div',{style:{fontSize:13}},'Start tracking your song pitches')
+        )
+      :h('div',{className:'list'},
+          shown.map(function(p){
+            var ct=contMap[p.contactId];
+            var age=daysSince(p.dateSent);
+            var stale=isStale(p);
+            return h('div',{key:p.id,className:'list-item'},
+              h('div',{style:{flex:1,minWidth:0}},
+                h('div',{style:{display:'flex',alignItems:'center',gap:8,marginBottom:4,flexWrap:'wrap'}},
+                  h('span',{style:{fontWeight:600,fontSize:15}},p.songTitle||'Untitled'),
+                  h(Badge,{status:p.status}),
+                  stale&&h('span',{style:{fontSize:10,background:'var(--err-bg)',color:'var(--err)',border:'0.5px solid var(--err-bo)',borderRadius:4,padding:'2px 6px',fontWeight:600}},'\u26A0 '+age+'d — follow up')
+                ),
+                h('div',{style:{fontSize:13,color:'var(--text2)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},
+                  [p.artistTarget&&('\u2192 '+p.artistTarget),ct&&('via '+ct.name+(ct.role?' ('+ct.role+')':''))].filter(Boolean).join(' · ')||'No contact linked'
+                ),
+                p.notes&&h('div',{style:{fontSize:12,color:'var(--text3)',marginTop:3,fontStyle:'italic'}},p.notes)
+              ),
+              h('div',{style:{textAlign:'right',flexShrink:0,minWidth:64}},
+                p.dateSent&&h('div',{style:{fontSize:12,color:stale?'var(--err)':'var(--text2)',fontWeight:stale?600:400}},age+'d ago'),
+                h('div',{style:{fontSize:11,color:'var(--text3)',marginTop:2}},fmtDate(p.dateSent))
+              ),
+              h('div',{style:{display:'flex',gap:5,flexShrink:0}},
+                h('select',{value:p.status,onChange:function(e){onStatus(p.id,e.target.value);},style:{fontSize:11,padding:'4px 6px',borderRadius:'var(--radius)',border:'0.5px solid var(--border-s)',background:'var(--card2)',color:'var(--text2)',cursor:'pointer'}},
+                  Object.entries(STATUS_CFG).map(function(entry){return h('option',{key:entry[0],value:entry[0]},entry[1].label);})
+                ),
+                h(Btn,{onClick:function(){onEdit(p);}},'Edit'),
+                h(Btn,{onClick:function(){if(confirm('Delete this pitch?'))onDelete(p.id);},cls:'dan'},'✕')
+              )
+            );
+          })
+        )
+  );
+}
+
+// ── PITCH FORM ────────────────────────────────────────────────────────────────
+function PitchForm(props){
+  var pitch=props.pitch,contacts=props.contacts,onSave=props.onSave,onCancel=props.onCancel;
+  var _f=useState(function(){return pitch||{songTitle:'',artistTarget:'',contactId:'',dateSent:new Date().toISOString().slice(0,10),status:'sent',notes:''};});
+  var form=_f[0],setForm=_f[1];
+  function set(k,v){setForm(function(f){var o=Object.assign({},f);o[k]=v;return o;});}
+  return h('div',null,
+    h('div',{style:{display:'flex',alignItems:'center',gap:12,marginBottom:22}},
+      h('button',{onClick:onCancel,style:{background:'none',border:'none',color:'var(--text2)',cursor:'pointer',fontSize:13}},'← Back'),
+      h('h1',{style:{fontSize:18,fontWeight:600,margin:0}},pitch?'Edit pitch':'Log a pitch')
+    ),
+    h('div',{className:'card'},
+      h('div',{className:'grid2'},
+        h('div',{className:'span2'},h('label',{className:'lbl'},'Song title'),h('input',{className:'inp',value:form.songTitle,onChange:function(e){set('songTitle',e.target.value);},placeholder:'The song you pitched'})),
+        h('div',null,h('label',{className:'lbl'},'Target artist'),h('input',{className:'inp',value:form.artistTarget,onChange:function(e){set('artistTarget',e.target.value);},placeholder:'Cody Johnson, Riley Green...'})),
+        h('div',null,h('label',{className:'lbl'},'Status'),h('select',{className:'inp',value:form.status,onChange:function(e){set('status',e.target.value);}},
+          Object.entries(STATUS_CFG).map(function(entry){return h('option',{key:entry[0],value:entry[0]},entry[1].label);})
+        )),
+        h('div',null,h('label',{className:'lbl'},'Contact used'),h('select',{className:'inp',value:form.contactId,onChange:function(e){set('contactId',e.target.value);}},
+          h('option',{value:''},'— no contact linked —'),
+          contacts.map(function(c){return h('option',{key:c.id,value:c.id},c.name+(c.role?' ('+c.role+')':'')+(c.artistConnection?' — '+c.artistConnection:''));})
+        )),
+        h('div',null,h('label',{className:'lbl'},'Date sent'),h('input',{className:'inp',type:'date',value:form.dateSent,onChange:function(e){set('dateSent',e.target.value);}})),
+        h('div',{className:'span2'},h('label',{className:'lbl'},'Notes'),h('textarea',{className:'inp',value:form.notes,onChange:function(e){set('notes',e.target.value);},placeholder:'How it was submitted, feedback received...',rows:3,style:{resize:'vertical'}}))
+      )
+    ),
+    h('div',{style:{display:'flex',justifyContent:'flex-end',gap:8,marginTop:8}},
+      h('button',{onClick:onCancel,style:{background:'none',border:'none',color:'var(--text2)',cursor:'pointer',padding:'8px 14px'}},'Cancel'),
+      h(Btn,{onClick:function(){onSave(form);},cls:'acc',style:{fontSize:14,padding:'8px 20px'}},'Save pitch')
+    )
+  );
+}
+
+// ── CONTACTS VIEW ─────────────────────────────────────────────────────────────
+function ContactsView(props){
+  var contacts=props.contacts,pitches=props.pitches,onNew=props.onNew,onEdit=props.onEdit,onDelete=props.onDelete,onFinder=props.onFinder;
+  var _r=useState('All'),role=_r[0],setRole=_r[1];
+  var _s=useState(''),search=_s[0],setSearch=_s[1];
+  var roles=['All'].concat(ROLES);
+  function pitchCount(id){ return pitches.filter(function(p){return p.contactId===id;}).length; }
+  var shown=contacts.filter(function(c){
+    var roleOk=role==='All'||c.role===role;
+    var searchOk=!search||c.name.toLowerCase().includes(search.toLowerCase())||c.company.toLowerCase().includes(search.toLowerCase())||c.artistConnection.toLowerCase().includes(search.toLowerCase());
+    return roleOk&&searchOk;
+  });
+  return h('div',null,
+    h('div',{style:{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:20}},
+      h('div',null,
+        h('h1',{style:{fontSize:20,fontWeight:600,margin:0}},'Contacts'),
+        h('p',{style:{fontSize:13,color:'var(--text2)',margin:'3px 0 0'}},contacts.length+' contacts in your database')
+      ),
+      h('div',{style:{display:'flex',gap:6}},
+        h(Btn,{onClick:onFinder,cls:'pro'},'✦ AI lookup'),
+        h(Btn,{onClick:onNew,cls:'acc',style:{fontSize:13,padding:'8px 15px'}},'+ Add contact')
+      )
+    ),
+    h('div',{style:{display:'flex',gap:8,marginBottom:14}},
+      h('input',{className:'inp',value:search,onChange:function(e){setSearch(e.target.value);},placeholder:'Search by name, company, or artist...',style:{flex:1}})
+    ),
+    h('div',{className:'filter-row'},
+      roles.map(function(r){return h('button',{key:r,onClick:function(){setRole(r);},className:'btn btn-'+(role===r?'acc':'sec'),style:{fontSize:11}},r);})
+    ),
+    shown.length===0
+      ?h('div',{className:'empty'},
+          h('div',{style:{fontSize:32,marginBottom:12}},'📇'),
+          h('div',{style:{fontSize:15,color:'var(--text2)',marginBottom:4}},contacts.length===0?'No contacts yet':'No contacts matching this filter'),
+          contacts.length===0&&h('div',{style:{fontSize:13}},'Use AI Lookup to find contacts or add them manually')
+        )
+      :h('div',{className:'list'},
+          shown.map(function(c){
+            var pc=pitchCount(c.id);
+            return h('div',{key:c.id,className:'list-item'},
+              h(Avatar,{name:c.name}),
+              h('div',{style:{flex:1,minWidth:0}},
+                h('div',{style:{display:'flex',alignItems:'center',gap:8,marginBottom:3}},
+                  h('span',{style:{fontWeight:600,fontSize:15}},c.name),
+                  c.role&&h('span',{className:'chip',style:{background:'var(--card2)',color:'var(--text2)',borderColor:'var(--border-s)',fontSize:9}},c.role)
+                ),
+                h('div',{style:{fontSize:13,color:'var(--text2)'}},
+                  [c.company,c.artistConnection&&('('+c.artistConnection+')')].filter(Boolean).join(' ')||'—'
+                ),
+                h('div',{style:{fontSize:12,color:'var(--text3)',marginTop:2}},[c.email,c.phone].filter(Boolean).join(' · ')||'No contact info')
+              ),
+              h('div',{style:{textAlign:'right',flexShrink:0}},
+                pc>0&&h('div',{style:{fontSize:12,color:'var(--acc)',fontWeight:500}},pc+' pitch'+(pc!==1?'es':'')),
+                c.lastVerified&&h('div',{style:{fontSize:11,color:'var(--text3)',marginTop:2}},'Verified '+fmtDate(c.lastVerified))
+              ),
+              h('div',{style:{display:'flex',gap:5}},
+                h(Btn,{onClick:function(){onEdit(c);}},'Edit'),
+                h(Btn,{onClick:function(){if(confirm('Delete this contact?'))onDelete(c.id);},cls:'dan'},'✕')
+              )
+            );
+          })
+        )
+  );
+}
+
+// ── CONTACT FORM ──────────────────────────────────────────────────────────────
+function ContactForm(props){
+  var contact=props.contact,onSave=props.onSave,onCancel=props.onCancel;
+  var _f=useState(function(){return contact||{name:'',role:'Manager',company:'',artistConnection:'',email:'',phone:'',notes:'',lastVerified:new Date().toISOString().slice(0,10)};});
+  var form=_f[0],setForm=_f[1];
+  function set(k,v){setForm(function(f){var o=Object.assign({},f);o[k]=v;return o;});}
+  return h('div',null,
+    h('div',{style:{display:'flex',alignItems:'center',gap:12,marginBottom:22}},
+      h('button',{onClick:onCancel,style:{background:'none',border:'none',color:'var(--text2)',cursor:'pointer',fontSize:13}},'← Back'),
+      h('h1',{style:{fontSize:18,fontWeight:600,margin:0}},contact?'Edit contact':'Add contact')
+    ),
+    h('div',{className:'card'},
+      h('div',{className:'grid2'},
+        h('div',null,h('label',{className:'lbl'},'Name'),h('input',{className:'inp',value:form.name,onChange:function(e){set('name',e.target.value);},placeholder:'Full name'})),
+        h('div',null,h('label',{className:'lbl'},'Role'),h('select',{className:'inp',value:form.role,onChange:function(e){set('role',e.target.value);}},ROLES.map(function(r){return h('option',{key:r,value:r},r);}))),
+        h('div',null,h('label',{className:'lbl'},'Company'),h('input',{className:'inp',value:form.company,onChange:function(e){set('company',e.target.value);},placeholder:'Management co., label, publisher...'})),
+        h('div',null,h('label',{className:'lbl'},'Artist connection'),h('input',{className:'inp',value:form.artistConnection,onChange:function(e){set('artistConnection',e.target.value);},placeholder:'Which artist do they work with?'})),
+        h('div',null,h('label',{className:'lbl'},'Email'),h('input',{className:'inp',type:'email',value:form.email,onChange:function(e){set('email',e.target.value);},placeholder:'contact@company.com'})),
+        h('div',null,h('label',{className:'lbl'},'Phone'),h('input',{className:'inp',value:form.phone,onChange:function(e){set('phone',e.target.value);},placeholder:'(615) 555-0100'})),
+        h('div',null,h('label',{className:'lbl'},'Last verified'),h('input',{className:'inp',type:'date',value:form.lastVerified,onChange:function(e){set('lastVerified',e.target.value);}})),
+        h('div',{className:'span2'},h('label',{className:'lbl'},'Notes'),h('textarea',{className:'inp',value:form.notes,onChange:function(e){set('notes',e.target.value);},placeholder:'How you know them, preferred contact method...',rows:2,style:{resize:'vertical'}}))
+      )
+    ),
+    h('div',{style:{display:'flex',justifyContent:'flex-end',gap:8,marginTop:8}},
+      h('button',{onClick:onCancel,style:{background:'none',border:'none',color:'var(--text2)',cursor:'pointer',padding:'8px 14px'}},'Cancel'),
+      h(Btn,{onClick:function(){onSave(form);},cls:'acc',style:{fontSize:14,padding:'8px 20px'}},'Save contact')
+    )
+  );
+}
+
+// ── AI FINDER VIEW ────────────────────────────────────────────────────────────
+function FinderView(props){
+  var existingContacts=props.existingContacts,onSaveContact=props.onSaveContact,onSwitchTab=props.onSwitchTab;
+  var _a=useState(''),artist=_a[0],setArtist=_a[1];
+  var _l=useState(false),loading=_l[0],setLoading=_l[1];
+  var _r=useState(null),results=_r[0],setResults=_r[1];
+  var _e=useState(''),error=_e[0],setError=_e[1];
+  var _saved=useState({}),saved=_saved[0],setSaved=_saved[1];
+
+  function doSearch(){
+    if(!artist.trim())return;
+    setLoading(true);setResults(null);setError('');setSaved({});
+    aiSearchContacts(artist.trim()).then(function(r){
+      if(r.error){setError(r.error);}
+      else setResults(r);
+    }).catch(function(err){setError('Search failed. Make sure ANTHROPIC_API_KEY is set in Netlify environment variables.');})
+    .finally(function(){setLoading(false);});
+  }
+
+  function saveResult(key,data,name,role,company){
+    var existing=existingContacts.find(function(c){return c.name&&name&&c.name.toLowerCase()===name.toLowerCase();});
+    var contact={id:existing?existing.id:genId(),name:name,role:role,company:company,
+      email:data.email||'',phone:'',artistConnection:artist,notes:data.notes||'',
+      lastVerified:new Date().toISOString().slice(0,10)};
+    onSaveContact(contact,!!existing);
+    setSaved(function(s){var o=Object.assign({},s);o[key]=true;return o;});
+  }
+
+  function ResultCard(rProps){
+    var label=rProps.label,data=rProps.data,saveKey=rProps.saveKey,role=rProps.role,nameField=rProps.nameField||'name',compField=rProps.compField||'company';
+    if(!data)return null;
+    var name=data[nameField]||data.name||data.contact||'';
+    var company=data[compField]||data.company||data.label||'';
+    if(!name&&!company)return h('div',{className:'card',style:{opacity:.5,marginBottom:12}},
+      h('div',{style:{fontSize:11,fontWeight:600,textTransform:'uppercase',letterSpacing:1,color:'var(--acc)',marginBottom:6}},label),
+      h('div',{style:{fontSize:13,color:'var(--text3)'}},'No information found')
+    );
+    var alreadyExists=existingContacts.some(function(c){return c.name&&name&&c.name.toLowerCase()===name.toLowerCase();});
+    return h('div',{className:'card',style:{marginBottom:12}},
+      h('div',{style:{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10}},
+        h('div',{style:{fontSize:11,fontWeight:600,textTransform:'uppercase',letterSpacing:1,color:'var(--acc)'}},label),
+        !saved[saveKey]&&name
+          ?h(Btn,{onClick:function(){saveResult(saveKey,data,name,role,company);},cls:'acc',style:{fontSize:11}},alreadyExists?'Update contact':'+ Save')
+          :saved[saveKey]&&h('span',{style:{fontSize:11,color:'var(--ok)',fontWeight:600}},'✓ Saved')
+      ),
+      name&&h('div',{style:{fontWeight:600,fontSize:15,marginBottom:4}},name),
+      company&&h('div',{style:{fontSize:13,color:'var(--text2)',marginBottom:3}},company),
+      data.label&&data.label!==company&&h('div',{style:{fontSize:13,color:'var(--text2)',marginBottom:3}},data.label),
+      data.contact&&data.contact!==name&&h('div',{style:{fontSize:13,color:'var(--text2)',marginBottom:3}},'Contact: '+data.contact),
+      data.email&&h('div',{style:{fontSize:13,color:'var(--info)',marginBottom:3}},data.email),
+      data.notes&&h('div',{style:{fontSize:12,color:'var(--text3)',marginTop:6,fontStyle:'italic'}},data.notes)
+    );
+  }
+
+  return h('div',null,
+    h('h1',{style:{fontSize:20,fontWeight:600,margin:'0 0 6px'}},'AI contact lookup'),
+    h('p',{style:{fontSize:13,color:'var(--text2)',margin:'0 0 22px'}},'Enter an artist name to find their current manager, A&R, and publisher. Takes 10–20 seconds.'),
+    h('div',{style:{display:'flex',gap:8,marginBottom:24}},
+      h('input',{className:'inp',value:artist,onChange:function(e){setArtist(e.target.value);},onKeyDown:function(e){if(e.key==='Enter')doSearch();},placeholder:'"Cody Johnson", "Riley Green", "Lainey Wilson"...',style:{flex:1}}),
+      h(Btn,{onClick:doSearch,disabled:loading,cls:'pro',style:{padding:'8px 18px',fontSize:13}},loading?'Searching...':'✦ Search')
+    ),
+    loading&&h('div',{style:{textAlign:'center',padding:32,color:'var(--text2)'}},
+      h('div',{style:{fontSize:13,color:'var(--acc)',marginBottom:8}},'Searching the web for current contacts...'),
+      h('div',{style:{fontSize:12,color:'var(--text3)'}},'This takes 10–20 seconds')
+    ),
+    error&&h('div',{style:{background:'var(--err-bg)',border:'0.5px solid var(--err-bo)',borderRadius:12,padding:16,fontSize:13,color:'var(--err)',marginBottom:16}},error),
+    results&&h('div',null,
+      h('div',{style:{fontSize:12,color:'var(--text3)',marginBottom:16}},'Results for "'+artist+'" — always verify before reaching out'),
+      h(ResultCard,{label:'Manager',data:results.manager,saveKey:'manager',role:'Manager'}),
+      h(ResultCard,{label:'A&R / Label',data:results.ar,saveKey:'ar',role:'A&R',compField:'label'}),
+      h(ResultCard,{label:'Publisher / Creative',data:results.publisher,saveKey:'publisher',role:'Publisher / Creative',nameField:'contact'})
+    ),
+    !results&&!loading&&!error&&h('div',{style:{textAlign:'center',padding:'40px 0',color:'var(--text3)'}},
+      h('div',{style:{fontSize:28,marginBottom:10}},'✦'),
+      h('div',{style:{fontSize:13}},'Results appear here — verify all info before reaching out')
+    )
+  );
+}
+
+// ── IMPORT SHEET VIEW ─────────────────────────────────────────────────────────
+function ImportView(props){
+  var onSaved=props.onSaved,userId=props.userId;
+  var _drag=useState(false),dragging=_drag[0],setDragging=_drag[1];
+  var _rows=useState(null),rows=_rows[0],setRows=_rows[1];
+  var _file=useState(''),fileName=_file[0],setFileName=_file[1];
+  var _year=useState(new Date().getFullYear()),refYear=_year[0],setRefYear=_year[1];
+  var _err=useState(''),error=_err[0],setError=_err[1];
+  var _saving=useState(false),saving=_saving[0],setSaving=_saving[1];
+
+  function processFile(file){
+    setError('');setRows(null);
+    if(!file) return;
+    setFileName(file.name);
+    var reader=new FileReader();
+    reader.onload=function(e){
+      try{
+        var data=new Uint8Array(e.target.result);
+        var wb=XLSX.read(data,{type:'array'});
+        var sheetName=wb.SheetNames[0];
+        var sheet=wb.Sheets[sheetName];
+        var raw=XLSX.utils.sheet_to_json(sheet,{header:1,defval:''});
+        var classified=classifyTipSheetRows(raw,refYear);
+        if(classified.length===0){
+          setError('No artist rows found — this sheet\'s layout may not match the expected Artist / Producer / A&R / Cut Date / Looking For / Management format.');
+        }
+        setRows(classified);
+      }catch(err){
+        setError('Could not read this file: '+err.message);
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  }
+
+  function onDrop(e){
+    e.preventDefault();setDragging(false);
+    var file=e.dataTransfer.files&&e.dataTransfer.files[0];
+    processFile(file);
+  }
+  function onPick(e){
+    var file=e.target.files&&e.target.files[0];
+    processFile(file);
+  }
+  function setRow(idx,patch){
+    setRows(function(rs){ return rs.map(function(r,i){ return i===idx?Object.assign({},r,patch):r; }); });
+  }
+  function removeRow(idx){
+    setRows(function(rs){ return rs.filter(function(_,i){return i!==idx;}); });
+  }
+  function saveAll(){
+    if(!rows||rows.length===0)return;
+    setSaving(true);
+    insertArtistSheetsBatch(rows,userId,fileName).then(function(){
+      setSaving(false);setRows(null);setFileName('');
+      onSaved();
+    }).catch(function(err){setSaving(false);setError(err.message);});
+  }
+
+  return h('div',null,
+    h('h1',{style:{fontSize:20,fontWeight:600,margin:'0 0 6px'}},'Import a tip sheet'),
+    h('p',{style:{fontSize:13,color:'var(--text2)',margin:'0 0 18px'}},'Drop an Excel tip sheet in and review the extracted entries before saving.'),
+    !rows&&h('div',null,
+      h('div',{style:{marginBottom:14,display:'flex',alignItems:'center',gap:10}},
+        h('label',{className:'lbl',style:{marginBottom:0}},'Sheet year'),
+        h('input',{className:'inp',type:'number',value:refYear,onChange:function(e){setRefYear(parseInt(e.target.value,10)||new Date().getFullYear());},style:{width:100}}),
+        h('span',{style:{fontSize:12,color:'var(--text3)'}},'used to resolve dates like "Aug 29th"')
+      ),
+      h('div',{
+        className:'dropzone'+(dragging?' drag':''),
+        onDragOver:function(e){e.preventDefault();setDragging(true);},
+        onDragLeave:function(){setDragging(false);},
+        onDrop:onDrop,
+        onClick:function(){document.getElementById('sheet-file-input').click();}
+      },
+        h('div',{style:{fontSize:28,marginBottom:8}},'📄'),
+        h('div',{style:{fontSize:14,marginBottom:4}},'Drag & drop a tip sheet here'),
+        h('div',{style:{fontSize:12,color:'var(--text3)'}},'or click to browse — .xlsx / .xls / .csv'),
+        h('input',{id:'sheet-file-input',type:'file',accept:'.xlsx,.xls,.csv',style:{display:'none'},onChange:onPick})
+      )
+    ),
+    error&&h('div',{style:{background:'var(--err-bg)',border:'0.5px solid var(--err-bo)',borderRadius:12,padding:14,fontSize:13,color:'var(--err)',marginTop:14}},error),
+    rows&&h('div',{style:{marginTop:16}},
+      h('div',{style:{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10}},
+        h('div',{style:{fontSize:13,color:'var(--text2)'}},rows.length+' entries found in "'+fileName+'" — review, edit, then save'),
+        h('div',{style:{display:'flex',gap:8}},
+          h(Btn,{onClick:function(){setRows(null);setFileName('');},cls:'sec'},'Start over'),
+          h(Btn,{onClick:saveAll,disabled:saving,cls:'acc'},saving?'Saving...':'Save all to Who\'s Looking')
+        )
+      ),
+      h('div',{style:{overflowX:'auto'}},
+        h('table',{className:'review-table'},
+          h('thead',null,h('tr',null,
+            ['Label','Artist','Producer','Contacts','Cut date','Urgency','Looking for','Self-penned','Mgmt',''].map(function(c){return h('th',{key:c},c);})
+          )),
+          h('tbody',null,
+            rows.map(function(r,idx){
+              return h('tr',{key:r._tmpId,className:r.flagged?'flag-row':''},
+                h('td',null,h('input',{className:'inp',value:r.label,onChange:function(e){setRow(idx,{label:e.target.value});},style:{minWidth:110}})),
+                h('td',null,h('input',{className:'inp',value:r.artistName,onChange:function(e){setRow(idx,{artistName:e.target.value});},style:{minWidth:130}})),
+                h('td',null,h('input',{className:'inp',value:r.producer,onChange:function(e){setRow(idx,{producer:e.target.value});},style:{minWidth:110}})),
+                h('td',null,h('textarea',{className:'inp',rows:2,value:(r.contacts||[]).map(function(c){return c.name+' <'+c.email+'>';}).join('\n'),onChange:function(e){
+                  var parsed=e.target.value.split('\n').filter(Boolean).map(function(line){
+                    var m=line.match(/^(.*?)\s*<(.+?)>\s*$/);
+                    return m?{name:m[1].trim(),email:m[2].trim()}:{name:line.trim(),email:''};
+                  });
+                  setRow(idx,{contacts:parsed});
+                },style:{minWidth:170}})),
+                h('td',null,h('input',{className:'inp',value:r.cutDateRaw,onChange:function(e){
+                  var patch={cutDateRaw:e.target.value};
+                  var iso=extractDateFromText(e.target.value,refYear);
+                  patch.cutDate=iso; patch.urgency=iso?'date':classifyUrgency(e.target.value);
+                  setRow(idx,patch);
+                },style:{minWidth:150}})),
+                h('td',null,h('select',{className:'inp',value:r.urgency,onChange:function(e){setRow(idx,{urgency:e.target.value});},style:{minWidth:110}},
+                  Object.keys(URGENCY_LABELS).map(function(k){return h('option',{key:k,value:k},URGENCY_LABELS[k]);})
+                )),
+                h('td',null,h('textarea',{className:'inp',rows:2,value:r.lookingFor,onChange:function(e){setRow(idx,{lookingFor:e.target.value});},style:{minWidth:200}})),
+                h('td',null,h('select',{className:'inp',value:r.selfPenned,onChange:function(e){setRow(idx,{selfPenned:e.target.value});},style:{minWidth:90}},
+                  h('option',{value:'open'},'Open'),h('option',{value:'closed'},'Closed'),h('option',{value:'unclear'},'Unclear')
+                )),
+                h('td',null,h('input',{className:'inp',value:r.management,onChange:function(e){setRow(idx,{management:e.target.value});},style:{minWidth:130}})),
+                h('td',null,h(Btn,{onClick:function(){removeRow(idx);},cls:'dan'},'✕'))
+              );
+            })
+          )
+        )
+      )
+    )
+  );
+}
+
+// ── WHO'S LOOKING VIEW ────────────────────────────────────────────────────────
+function LookingView(props){
+  var sheetRows=props.sheetRows,onArchive=props.onArchive,onDelete=props.onDelete,onSwitchToImport=props.onSwitchToImport;
+  var writingStats=props.writingStats,onResearchWriting=props.onResearchWriting,researching=props.researching;
+  var _f=useState('active'),filter=_f[0],setFilter=_f[1];
+  var _sk=useState('priority'),sortKey=_sk[0],setSortKey=_sk[1];
+  var _sd=useState(1),sortDir=_sd[0],setSortDir=_sd[1];
+  var filtered=sheetRows.filter(function(r){return filter==='all'?true:r.status===filter;});
+  var shown=sortRows(filtered,sortKey,sortDir);
+  var openCount=sheetRows.filter(function(r){return r.selfPenned==='open';}).length;
+  var closedCount=sheetRows.filter(function(r){return r.selfPenned==='closed';}).length;
+  var unclearCount=sheetRows.filter(function(r){return r.selfPenned==='unclear';}).length;
+  var total=sheetRows.length||1;
+
+  var statsMap={};
+  writingStats.forEach(function(s){statsMap[s.artistNameKey]=s;});
+  function statsFor(artistName){ return statsMap[(artistName||'').trim().toLowerCase()]; }
+
+  function urgencyPill(u){
+    var cfg={ date:{bg:'var(--cut-bg)',co:'var(--cut-co)'}, high:{bg:'var(--err-bg)',co:'var(--err)'},
+      soon:{bg:'var(--acc-bg)',co:'var(--acc)'}, medium:{bg:'var(--hold-bg)',co:'var(--hold-co)'},
+      low:{bg:'var(--passed-bg)',co:'var(--passed-co)'}, unclear:{bg:'var(--passed-bg)',co:'var(--passed-co)'} }[u]||{bg:'var(--passed-bg)',co:'var(--passed-co)'};
+    return h('span',{className:'urgency-pill',style:{background:cfg.bg,color:cfg.co}},URGENCY_LABELS[u]||u);
+  }
+
+  function WritingBadge(rProps){
+    var artistName=rProps.artistName;
+    var stats=statsFor(artistName);
+    var isLoading=researching[artistName.trim().toLowerCase()];
+    if(isLoading){
+      return h('span',{style:{fontSize:11,color:'var(--text3)'}},'Researching writing history...');
+    }
+    if(stats){
+      var confColor=stats.confidence==='high'?'var(--ok)':stats.confidence==='medium'?'var(--acc)':'var(--text3)';
+      return h('div',{style:{display:'flex',alignItems:'center',gap:8,marginTop:4,flexWrap:'wrap'}},
+        h('span',{className:'chip',style:{background:'var(--hold-bg)',color:'var(--hold-co)',borderColor:'transparent'}},
+          (stats.coWritePct!=null?stats.coWritePct:'?')+'% co-write / '+(stats.outsidePct!=null?stats.outsidePct:'?')+'% outside'
+        ),
+        h('span',{style:{fontSize:10,color:confColor,fontWeight:600,textTransform:'uppercase',letterSpacing:.5}},stats.confidence+' confidence'),
+        h('button',{onClick:function(){onResearchWriting(artistName);},style:{fontSize:11,color:'var(--text3)',background:'none',border:'none',cursor:'pointer',textDecoration:'underline'}},'Refresh')
+      );
+    }
+    return h(Btn,{onClick:function(){onResearchWriting(artistName);},cls:'pro',style:{fontSize:11,padding:'4px 9px',marginTop:4}},'✦ Research writing history');
+  }
+
+  return h('div',null,
+    h('div',{style:{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:16}},
+      h('div',null,
+        h('h1',{style:{fontSize:20,fontWeight:600,margin:0}},'Who\'s Looking'),
+        h('p',{style:{fontSize:13,color:'var(--text2)',margin:'3px 0 0'}},sheetRows.length+' entries from imported tip sheets')
+      ),
+      h(Btn,{onClick:onSwitchToImport,cls:'acc'},'⬆ Import a sheet')
+    ),
+    h('div',{style:{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:8,marginBottom:18}},
+      h('div',{className:'metric'},
+        h('div',{style:{fontSize:10,color:'var(--text3)',textTransform:'uppercase',letterSpacing:1,marginBottom:3}},'Open to outside'),
+        h('div',{style:{fontSize:20,fontWeight:600,color:'var(--ok)'}},openCount+' ('+Math.round(100*openCount/total)+'%)')
+      ),
+      h('div',{className:'metric'},
+        h('div',{style:{fontSize:10,color:'var(--text3)',textTransform:'uppercase',letterSpacing:1,marginBottom:3}},'Writes own / closed'),
+        h('div',{style:{fontSize:20,fontWeight:600,color:'var(--err)'}},closedCount+' ('+Math.round(100*closedCount/total)+'%)')
+      ),
+      h('div',{className:'metric'},
+        h('div',{style:{fontSize:10,color:'var(--text3)',textTransform:'uppercase',letterSpacing:1,marginBottom:3}},'Unclear'),
+        h('div',{style:{fontSize:20,fontWeight:600,color:'var(--text2)'}},unclearCount)
+      )
+    ),
+    h('div',{style:{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:10,marginBottom:14}},
+      h('div',{className:'filter-row',style:{marginBottom:0}},
+        ['active','archived','all'].map(function(f){
+          return h('button',{key:f,onClick:function(){setFilter(f);},className:'btn btn-'+(filter===f?'acc':'sec')},f.charAt(0).toUpperCase()+f.slice(1));
+        })
+      ),
+      h('div',{style:{display:'flex',alignItems:'center',gap:6}},
+        h('label',{style:{fontSize:11,color:'var(--text3)',textTransform:'uppercase',letterSpacing:1}},'Sort by'),
+        h('select',{className:'inp',value:sortKey,onChange:function(e){setSortKey(e.target.value);},style:{minWidth:150}},
+          SORT_OPTIONS.map(function(o){return h('option',{key:o.key,value:o.key},o.label);})
+        ),
+        h('button',{onClick:function(){setSortDir(function(d){return d*-1;});},className:'btn btn-sec',title:'Toggle direction'},sortDir===1?'↑ Asc':'↓ Desc')
+      )
+    ),
+    shown.length===0
+      ?h('div',{className:'empty'},
+          h('div',{style:{fontSize:32,marginBottom:12}},'📋'),
+          h('div',{style:{fontSize:15,color:'var(--text2)'}},'No entries yet — import a tip sheet to get started')
+        )
+      :h('div',{className:'list'},
+          shown.map(function(r){
+            return h('div',{key:r.id,className:'list-item',style:{alignItems:'flex-start'}},
+              h('div',{style:{flex:1,minWidth:0}},
+                h('div',{style:{display:'flex',alignItems:'center',gap:8,marginBottom:4,flexWrap:'wrap'}},
+                  h('span',{style:{fontWeight:600,fontSize:15}},r.artistName),
+                  urgencyPill(r.urgency),
+                  r.cutDate&&h('span',{style:{fontSize:12,color:'var(--text2)'}},fmtDate(r.cutDate)),
+                  r.selfPenned!=='unclear'&&h('span',{className:'chip',style:{background:r.selfPenned==='open'?'var(--cut-bg)':'var(--err-bg)',color:r.selfPenned==='open'?'var(--cut-co)':'var(--err)',borderColor:'transparent'}},r.selfPenned==='open'?'Open':'Closed')
+                ),
+                h('div',{style:{fontSize:12,color:'var(--text3)',marginBottom:4}},[r.label,r.producer&&('Prod: '+r.producer)].filter(Boolean).join(' · ')),
+                r.lookingFor&&h('div',{style:{fontSize:13,color:'var(--text2)'}},r.lookingFor),
+                r.contacts&&r.contacts.length>0&&h('div',{style:{fontSize:12,color:'var(--info)',marginTop:4}},
+                  r.contacts.map(function(c){return c.name+(c.email?' <'+c.email+'>':'');}).join(' · ')
+                ),
+                r.management&&h('div',{style:{fontSize:11,color:'var(--text3)',marginTop:2}},'Mgmt: '+r.management),
+                !r.flagged&&h(WritingBadge,{artistName:r.artistName})
+              ),
+              h('div',{style:{display:'flex',gap:5,flexShrink:0}},
+                r.status==='active'
+                  ?h(Btn,{onClick:function(){onArchive(r.id,'archived');}},'Archive')
+                  :h(Btn,{onClick:function(){onArchive(r.id,'active');}},'Reactivate'),
+                h(Btn,{onClick:function(){if(confirm('Delete this entry?'))onDelete(r.id);},cls:'dan'},'✕')
+              )
+            );
+          })
+        )
+  );
+}
+
+// ── ROOT APP ──────────────────────────────────────────────────────────────────
+function App(){
+  var _a=useState('loading'),authState=_a[0],setAuthState=_a[1];
+  var _u=useState(null),user=_u[0],setUser=_u[1];
+  var _tab=useState('pitches'),tab=_tab[0],setTab=_tab[1];
+  var _v=useState('list'),view=_v[0],setView=_v[1];
+  var _c=useState(null),current=_c[0],setCurrent=_c[1];
+  var _p=useState([]),pitches=_p[0],setPitches=_p[1];
+  var _ct=useState([]),contacts=_ct[0],setContacts=_ct[1];
+  var _sr=useState([]),sheetRows=_sr[0],setSheetRows=_sr[1];
+  var _ws=useState([]),writingStats=_ws[0],setWritingStats=_ws[1];
+  var _rs=useState({}),researching=_rs[0],setResearching=_rs[1];
+  var _dl=useState(false),dataLoading=_dl[0],setDataLoading=_dl[1];
+  var _ae=useState(''),appError=_ae[0],setAppError=_ae[1];
+
+  useEffect(function(){
+    sb.auth.getSession().then(function(r){
+      if(r.data&&r.data.session&&r.data.session.user){setUser(r.data.session.user);setAuthState('authenticated');}
+      else setAuthState('unauthenticated');
+    });
+    var sub=sb.auth.onAuthStateChange(function(_,session){
+      if(session&&session.user){setUser(session.user);setAuthState('authenticated');}
+      else{setUser(null);setAuthState('unauthenticated');setPitches([]);setContacts([]);}
+    });
+    return function(){if(sub&&sub.data&&sub.data.subscription)sub.data.subscription.unsubscribe();};
+  },[]);
+
+  useEffect(function(){
+    if(authState!=='authenticated'||!user)return;
+    setDataLoading(true);
+    Promise.all([fetchPitches(),fetchContacts(),fetchArtistSheets(),fetchWritingStats()]).then(function(results){
+      setPitches(results[0]);setContacts(results[1]);setSheetRows(results[2]);setWritingStats(results[3]);
+    }).catch(function(err){setAppError(err.message);}).finally(function(){setDataLoading(false);});
+  },[authState,user&&user.id]);
+
+  function goList(){setView('list');setCurrent(null);}
+
+  function handleSavePitch(form){
+    var op=current?updatePitch(Object.assign({},current,form),user.id):insertPitch(form,user.id);
+    op.then(function(){return fetchPitches();}).then(function(updated){setPitches(updated);goList();}).catch(function(err){setAppError(err.message);});
+  }
+  function handleDeletePitch(id){
+    removePitch(id).then(function(){setPitches(function(p){return p.filter(function(x){return x.id!==id;});});}).catch(function(err){setAppError(err.message);});
+  }
+  function handlePitchStatus(id,status){
+    patchPitchStatus(id,status).then(function(){setPitches(function(p){return p.map(function(x){return x.id===id?Object.assign({},x,{status:status}):x;});});}).catch(function(err){setAppError(err.message);});
+  }
+  function handleSaveContact(contact,isUpdate){
+    var op=isUpdate?updateContact(contact,user.id):insertContact(contact,user.id);
+    op.then(function(){return fetchContacts();}).then(function(updated){setContacts(updated);}).catch(function(err){setAppError(err.message);});
+  }
+  function handleDeleteContact(id){
+    removeContact(id).then(function(){setContacts(function(c){return c.filter(function(x){return x.id!==id;});});}).catch(function(err){setAppError(err.message);});
+  }
+  function handleSheetImported(){
+    fetchArtistSheets().then(function(rows){setSheetRows(rows);setTab('looking');goList();}).catch(function(err){setAppError(err.message);});
+  }
+  function handleArchiveSheetRow(id,status){
+    updateArtistSheetStatus(id,status).then(function(){setSheetRows(function(rs){return rs.map(function(r){return r.id===id?Object.assign({},r,{status:status}):r;});});}).catch(function(err){setAppError(err.message);});
+  }
+  function handleDeleteSheetRow(id){
+    removeArtistSheet(id).then(function(){setSheetRows(function(rs){return rs.filter(function(r){return r.id!==id;});});}).catch(function(err){setAppError(err.message);});
+  }
+  function pollForWritingStats(key,startedAt,attempt){
+    attempt=attempt||0;
+    if(attempt>25){
+      setAppError('Writing history research for "'+key+'" is taking longer than expected — it may still finish in the background, check back in a bit.');
+      setResearching(function(r){var o=Object.assign({},r);delete o[key];return o;});
+      return;
+    }
+    setTimeout(function(){
+      fetchWritingStats().then(function(all){
+        var found=all.find(function(s){return s.artistNameKey===key && new Date(s.researchedAt)>startedAt;});
+        if(found){
+          setWritingStats(all);
+          setResearching(function(r){var o=Object.assign({},r);delete o[key];return o;});
+        } else {
+          pollForWritingStats(key,startedAt,attempt+1);
+        }
+      }).catch(function(){ pollForWritingStats(key,startedAt,attempt+1); });
+    },4000);
+  }
+  function handleResearchWriting(artistName){
+    var key=artistName.trim().toLowerCase();
+    setResearching(function(r){var o=Object.assign({},r);o[key]=true;return o;});
+    var startedAt=new Date();
+    sb.auth.getSession().then(function(sessionRes){
+      var token=sessionRes.data&&sessionRes.data.session&&sessionRes.data.session.access_token;
+      if(!token) throw new Error('Not signed in');
+      return triggerWritingHistoryResearch(artistName,user.id,token);
+    }).then(function(){
+      pollForWritingStats(key,startedAt,0);
+    }).catch(function(err){
+      setAppError(err.message);
+      setResearching(function(r){var o=Object.assign({},r);delete o[key];return o;});
+    });
+  }
+
+  if(authState==='loading'||dataLoading){
+    return h('div',{style:{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',color:'var(--text3)',fontSize:14}},dataLoading?'Loading pitch data...':'Loading...');
+  }
+  if(authState==='unauthenticated') return h(LoginScreen,null);
+
+  var TABS=[{id:'pitches',label:'Pitches'},{id:'contacts',label:'Contacts'},{id:'looking',label:'Who\'s Looking'},{id:'import',label:'\u2B06 Import Sheet'},{id:'finder',label:'\u2726 AI Lookup'}];
+
+  return h('div',null,
+    appError&&h('div',{style:{background:'var(--err-bg)',borderBottom:'0.5px solid var(--err-bo)',padding:'10px 20px',fontSize:13,color:'var(--err)',display:'flex',alignItems:'center',justifyContent:'space-between'}},
+      'Error: '+appError,
+      h('button',{onClick:function(){setAppError('');},style:{background:'none',border:'none',color:'var(--err)',cursor:'pointer',fontSize:16}},'✕')
+    ),
+    h('div',{className:'header'},
+      h('div',{onClick:goList,style:{cursor:'pointer'}},
+        h('div',{style:{fontSize:15,fontWeight:700,color:'var(--acc)',letterSpacing:'-.3px'}},'Pitch Log'),
+        h('div',{style:{fontSize:10,textTransform:'uppercase',letterSpacing:2,color:'var(--text3)',marginTop:1}},'Song pitching & contact database')
+      ),
+      h('div',{style:{display:'flex',gap:4}},
+        TABS.map(function(t){
+          return h('button',{key:t.id,onClick:function(){setTab(t.id);goList();},style:{padding:'6px 13px',fontSize:12,fontWeight:500,borderRadius:'var(--radius)',cursor:'pointer',border:'0.5px solid',background:tab===t.id?'var(--acc-bg)':'transparent',color:tab===t.id?'var(--acc)':'var(--text2)',borderColor:tab===t.id?'var(--acc-bo)':'transparent'}},t.label);
+        }),
+        h('div',{style:{width:1,background:'var(--border-s)',margin:'0 4px'}}),
+        h('button',{onClick:function(){sb.auth.signOut();},style:{padding:'6px 10px',fontSize:11,borderRadius:'var(--radius)',cursor:'pointer',border:'0.5px solid var(--border-s)',background:'transparent',color:'var(--text3)'}},'Sign out')
+      )
+    ),
+    h('div',{className:'main'},
+      tab==='pitches'&&view==='list'&&h(PitchesView,{pitches:pitches,contacts:contacts,onNew:function(){setCurrent(null);setView('form');},onEdit:function(p){setCurrent(p);setView('form');},onDelete:handleDeletePitch,onStatus:handlePitchStatus}),
+      tab==='pitches'&&view==='form'&&h(PitchForm,{pitch:current,contacts:contacts,onCancel:goList,onSave:handleSavePitch}),
+      tab==='contacts'&&view==='list'&&h(ContactsView,{contacts:contacts,pitches:pitches,onNew:function(){setCurrent(null);setView('form');},onEdit:function(c){setCurrent(c);setView('form');},onDelete:handleDeleteContact,onFinder:function(){setTab('finder');goList();}}),
+      tab==='contacts'&&view==='form'&&h(ContactForm,{contact:current,onCancel:goList,onSave:function(form){handleSaveContact(form,!!current);goList();}}),
+      tab==='finder'&&h(FinderView,{existingContacts:contacts,onSaveContact:handleSaveContact,onSwitchTab:function(t){setTab(t);goList();}}),
+      tab==='import'&&h(ImportView,{userId:user.id,onSaved:handleSheetImported}),
+      tab==='looking'&&h(LookingView,{sheetRows:sheetRows,onArchive:handleArchiveSheetRow,onDelete:handleDeleteSheetRow,onSwitchToImport:function(){setTab('import');goList();},writingStats:writingStats,onResearchWriting:handleResearchWriting,researching:researching})
+    )
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(h(App,null));
+</script>
+</body>
+</html>
