@@ -888,9 +888,11 @@ function ImportView(props){
 function LookingView(props){
   var sheetRows=props.sheetRows,onArchive=props.onArchive,onDelete=props.onDelete,onSwitchToImport=props.onSwitchToImport;
   var writingStats=props.writingStats,onResearchWriting=props.onResearchWriting,researching=props.researching;
+  var contacts=props.contacts,onSaveContact=props.onSaveContact;
   var _f=useState('active'),filter=_f[0],setFilter=_f[1];
   var _sk=useState('priority'),sortKey=_sk[0],setSortKey=_sk[1];
   var _sd=useState(1),sortDir=_sd[0],setSortDir=_sd[1];
+  var _cs=useState({}),contactSaveState=_cs[0],setContactSaveState=_cs[1];
   var filtered=sheetRows.filter(function(r){return filter==='all'?true:r.status===filter;});
   var shown=sortRows(filtered,sortKey,sortDir);
   var openCount=sheetRows.filter(function(r){return r.selfPenned==='open';}).length;
@@ -901,6 +903,47 @@ function LookingView(props){
   var statsMap={};
   writingStats.forEach(function(s){statsMap[s.artistNameKey]=s;});
   function statsFor(artistName){ return statsMap[(artistName||'').trim().toLowerCase()]; }
+
+  // Match a tip-sheet contact against the existing contact database: email match first
+  // (more reliable), falling back to an exact name match.
+  function findMatchingContact(ct){
+    if(!ct) return null;
+    var emailL=(ct.email||'').trim().toLowerCase();
+    var nameL=(ct.name||'').trim().toLowerCase();
+    if(emailL){
+      var byEmail=contacts.find(function(c){return c.email&&c.email.trim().toLowerCase()===emailL;});
+      if(byEmail) return byEmail;
+    }
+    if(nameL){
+      var byName=contacts.find(function(c){return c.name&&c.name.trim().toLowerCase()===nameL;});
+      if(byName) return byName;
+    }
+    return null;
+  }
+
+  function handleAddContact(sheetRow,ct,key,existing){
+    var merged = existing
+      ? Object.assign({},existing,{
+          email: existing.email || ct.email || '',
+          artistConnection: existing.artistConnection || sheetRow.artistName || '',
+          company: existing.company || sheetRow.label || '',
+          lastVerified: new Date().toISOString().slice(0,10)
+        })
+      : {
+          id: genId(),
+          name: ct.name || '',
+          role: 'A&R',
+          company: sheetRow.label || '',
+          artistConnection: sheetRow.artistName || '',
+          email: ct.email || '',
+          phone: '',
+          notes: 'Added from tip sheet import'+(sheetRow.sourceFile?' ('+sheetRow.sourceFile+')':''),
+          lastVerified: new Date().toISOString().slice(0,10)
+        };
+    onSaveContact(merged,!!existing).then(function(){
+      setContactSaveState(function(s){var o=Object.assign({},s);o[key]=existing?'merged':'new';return o;});
+    }).catch(function(){});
+  }
 
   function urgencyPill(u){
     var cfg={ date:{bg:'var(--cut-bg)',co:'var(--cut-co)'}, high:{bg:'var(--err-bg)',co:'var(--err)'},
@@ -1000,10 +1043,22 @@ function LookingView(props){
                 h('div',{style:{fontSize:13,color:r.lookingFor?'var(--text2)':'var(--text3)'}},r.lookingFor||'—')
               ),
               h('div',{style:{marginTop:10}},
-                h('div',{className:'lbl',style:{marginBottom:2}},'Contacts'),
-                h('div',{style:{fontSize:12,color:r.contacts&&r.contacts.length>0?'var(--info)':'var(--text3)'}},
-                  r.contacts&&r.contacts.length>0?r.contacts.map(function(c){return c.name+(c.email?' <'+c.email+'>':'');}).join(' · '):'—'
-                )
+                h('div',{className:'lbl',style:{marginBottom:4}},'Contacts'),
+                (r.contacts&&r.contacts.length>0)
+                  ?h('div',{style:{display:'flex',flexDirection:'column',gap:5}},
+                      r.contacts.map(function(ct,ci){
+                        var key=r.id+'-'+ci;
+                        var state=contactSaveState[key];
+                        var existing=state?null:findMatchingContact(ct);
+                        return h('div',{key:ci,style:{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8}},
+                          h('span',{style:{fontSize:12,color:'var(--info)'}},ct.name+(ct.email?' <'+ct.email+'>':'')),
+                          state
+                            ?h('span',{style:{fontSize:11,color:'var(--ok)',fontWeight:600,flexShrink:0}},state==='merged'?'✓ Updated existing':'✓ Added')
+                            :h(Btn,{onClick:function(){handleAddContact(r,ct,key,existing);},cls:existing?'sec':'acc',style:{fontSize:10,padding:'3px 8px',flexShrink:0}},existing?'Merge into existing':'+ Add to contacts')
+                        );
+                      })
+                    )
+                  :h('div',{style:{fontSize:12,color:'var(--text3)'}},'—')
               ),
               // footer: writing-history lookup
               h('div',{style:{marginTop:12,paddingTop:10,borderTop:'0.5px solid var(--border)'}},
@@ -1066,7 +1121,7 @@ function App(){
   }
   function handleSaveContact(contact,isUpdate){
     var op=isUpdate?updateContact(contact,user.id):insertContact(contact,user.id);
-    op.then(function(){return fetchContacts();}).then(function(updated){setContacts(updated);}).catch(function(err){setAppError(err.message);});
+    return op.then(function(){return fetchContacts();}).then(function(updated){setContacts(updated);return updated;}).catch(function(err){setAppError(err.message);throw err;});
   }
   function handleDeleteContact(id){
     removeContact(id).then(function(){setContacts(function(c){return c.filter(function(x){return x.id!==id;});});}).catch(function(err){setAppError(err.message);});
@@ -1147,7 +1202,7 @@ function App(){
       tab==='contacts'&&view==='form'&&h(ContactForm,{contact:current,onCancel:goList,onSave:function(form){handleSaveContact(form,!!current);goList();}}),
       tab==='finder'&&h(FinderView,{existingContacts:contacts,onSaveContact:handleSaveContact,onSwitchTab:function(t){setTab(t);goList();}}),
       tab==='import'&&h(ImportView,{userId:user.id,onSaved:handleSheetImported}),
-      tab==='looking'&&h(LookingView,{sheetRows:sheetRows,onArchive:handleArchiveSheetRow,onDelete:handleDeleteSheetRow,onSwitchToImport:function(){setTab('import');goList();},writingStats:writingStats,onResearchWriting:handleResearchWriting,researching:researching})
+      tab==='looking'&&h(LookingView,{sheetRows:sheetRows,onArchive:handleArchiveSheetRow,onDelete:handleDeleteSheetRow,onSwitchToImport:function(){setTab('import');goList();},writingStats:writingStats,onResearchWriting:handleResearchWriting,researching:researching,contacts:contacts,onSaveContact:handleSaveContact})
     )
   );
 }
