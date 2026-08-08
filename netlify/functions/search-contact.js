@@ -49,7 +49,8 @@ exports.handler = async function(event) {
       console.log('Firecrawl error for query "' + query + '":', JSON.stringify(data));
       return '';
     }
-    const items = data.data || [];
+    // v2 search returns { success, data: { web: [...] } } — not a bare array.
+    const items = (data.data && data.data.web) || [];
     console.log('Firecrawl results for "' + query + '":', items.length);
     return items.map(function(item) {
       return '### ' + (item.title || item.url) + '\n'

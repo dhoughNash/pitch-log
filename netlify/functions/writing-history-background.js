@@ -23,6 +23,21 @@ async function upsertResult(row, accessToken){
   }
 }
 
+function failRow(userId, artist, note) {
+  return {
+    user_id: userId,
+    artist_name_key: artist.trim().toLowerCase(),
+    artist_name: artist,
+    co_write_pct: null,
+    outside_pct: null,
+    songs_sampled: [],
+    confidence: 'low',
+    notes: note,
+    sources: [],
+    researched_at: new Date().toISOString()
+  };
+}
+
 exports.handler = async function(event) {
   let payload;
   try {
@@ -41,42 +56,106 @@ exports.handler = async function(event) {
     return { statusCode: 200, body: '' };
   }
 
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
+  const firecrawlKey = process.env.FIRECRAWL_API_KEY;
+  const anthropicKey = process.env.ANTHROPIC_API_KEY;
+
+  if (!firecrawlKey) {
+    console.log('FIRECRAWL_API_KEY not configured');
+    await upsertResult(failRow(userId, artist, 'Research failed — Firecrawl API key not configured.'), accessToken).catch(function(){});
+    return { statusCode: 200, body: '' };
+  }
+  if (!anthropicKey) {
     console.log('ANTHROPIC_API_KEY not configured');
+    await upsertResult(failRow(userId, artist, 'Research failed — Anthropic API key not configured.'), accessToken).catch(function(){});
     return { statusCode: 200, body: '' };
   }
 
+  // ── Firecrawl search helper ─────────────────────────────────────────────
+  // Mirrors search-contact.js. Uses markdown (not summary) since we need the
+  // actual per-song writing-credit detail off discography/credit pages, not
+  // just a blurb.
+  async function fcSearch(query, limit) {
+    console.log('Firecrawl search:', query);
+    const r = await fetch('https://api.firecrawl.dev/v2/search', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + firecrawlKey
+      },
+      body: JSON.stringify({
+        query: query,
+        limit: limit || 3,
+        scrapeOptions: { formats: [{ type: 'markdown' }] }
+      })
+    });
+    const data = await r.json();
+    if (!data.success) {
+      console.log('Firecrawl error for query "' + query + '":', JSON.stringify(data));
+      return '';
+    }
+    // v2 search returns { success, data: { web: [...] } } — not a bare array.
+    const items = (data.data && data.data.web) || [];
+    console.log('Firecrawl results for "' + query + '":', items.length);
+    return items.map(function(item) {
+      // Cap each page's markdown so three-plus pages don't blow past context.
+      const body = (item.markdown || item.description || '').slice(0, 4000);
+      return '### ' + (item.title || item.url) + '\n'
+        + (item.url || '') + '\n'
+        + body;
+    }).join('\n\n');
+  }
+
   try {
+    // Run targeted searches in parallel; don't let one failure kill the request
+    const results = await Promise.allSettled([
+      fcSearch(artist + ' discography wikipedia', 2),
+      fcSearch(artist + ' songwriter writing credits genius.com', 3),
+      fcSearch(artist + ' co-writer credits latest album singles', 3)
+    ]);
+
+    const discogCtx = results[0].status === 'fulfilled' ? results[0].value : '';
+    const creditsCtx = results[1].status === 'fulfilled' ? results[1].value : '';
+    const recentCtx = results[2].status === 'fulfilled' ? results[2].value : '';
+
+    if (!discogCtx && !creditsCtx && !recentCtx) {
+      console.log('No Firecrawl results found for', artist);
+      await upsertResult(failRow(userId, artist, 'No search results found for this artist.'), accessToken);
+      return { statusCode: 200, body: '' };
+    }
+
+    const prompt = 'Using ONLY the research notes below, analyze the country music artist "' + artist + '" '
+      + 'and their released discography (prioritize their most recent album plus singles from roughly the '
+      + 'last 3-4 years). For each song you can confirm from the notes, determine whether the artist is '
+      + 'credited as a co-writer/writer versus a song written entirely by outside songwriters (the artist '
+      + 'recorded it but has no writing credit). Be conservative: only count a song if the notes actually '
+      + 'support the writing credit, and say clearly if the data is thin. Do not invent songs, credits, or '
+      + 'sources that are not supported by the notes below — only cite URLs that actually appear in the notes.\n\n'
+      + '--- DISCOGRAPHY RESEARCH ---\n' + (discogCtx || 'No results.') + '\n\n'
+      + '--- WRITING CREDITS RESEARCH ---\n' + (creditsCtx || 'No results.') + '\n\n'
+      + '--- RECENT SINGLES/CREDITS RESEARCH ---\n' + (recentCtx || 'No results.') + '\n\n'
+      + 'Return ONLY valid JSON with no markdown, no explanation:\n'
+      + '{"artist":"","estimatedCoWritePct":0,"estimatedOutsidePct":0,'
+      + '"songsSampled":[{"title":"","hasWritingCredit":true}],'
+      + '"confidence":"high|medium|low","notes":"","sources":[""]}';
+
+    console.log('Calling Anthropic API (no web_search tool)...');
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-api-key': apiKey,
+        'x-api-key': anthropicKey,
         'anthropic-version': '2023-06-01'
       },
       body: JSON.stringify({
         model: 'claude-sonnet-4-6',
         max_tokens: 1500,
-        tools: [{ type: 'web_search_20250305', name: 'web_search' }],
-        messages: [{
-          role: 'user',
-          content: 'Research the country music artist "' + artist + '" and their released discography '
-            + '(prioritize their most recent album plus singles from roughly the last 3-4 years). For each '
-            + 'song you can confirm, determine whether the artist is credited as a co-writer/writer versus '
-            + 'a song written entirely by outside songwriters (the artist recorded it but has no writing credit). '
-            + 'Use at most 4 web searches total, favoring song-credit databases, Wikipedia discography pages, or '
-            + 'Genius credit pages. Be conservative: only count a song if you can actually verify the writing '
-            + 'credits, and say clearly if data is thin. '
-            + 'Return ONLY valid JSON with no markdown, no explanation:\n'
-            + '{"artist":"","estimatedCoWritePct":0,"estimatedOutsidePct":0,'
-            + '"songsSampled":[{"title":"","hasWritingCredit":true}],'
-            + '"confidence":"high|medium|low","notes":"","sources":[""]}'
-        }]
+        messages: [{ role: 'user', content: prompt }]
       })
     });
 
     const data = await response.json();
+    if (data.error) console.log('API error:', JSON.stringify(data.error));
+
     const text = (data.content || [])
       .filter(function(b) { return b.type === 'text'; })
       .map(function(b) { return b.text; })
@@ -104,18 +183,7 @@ exports.handler = async function(event) {
 
   } catch(err) {
     console.log('Background writing-history error:', err.message);
-    await upsertResult({
-      user_id: userId,
-      artist_name_key: artist.trim().toLowerCase(),
-      artist_name: artist,
-      co_write_pct: null,
-      outside_pct: null,
-      songs_sampled: [],
-      confidence: 'low',
-      notes: 'Research failed: ' + err.message,
-      sources: [],
-      researched_at: new Date().toISOString()
-    }, accessToken).catch(function(){});
+    await upsertResult(failRow(userId, artist, 'Research failed: ' + err.message), accessToken).catch(function(){});
   }
 
   return { statusCode: 200, body: '' };
