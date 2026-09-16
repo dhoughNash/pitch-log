@@ -98,6 +98,22 @@ function genId(){ return Date.now().toString(36)+Math.random().toString(36).slic
 function daysSince(d){ return d?Math.floor((Date.now()-new Date(d))/86400000):999; }
 function fmtDate(d){ if(!d)return'—'; return new Date(d).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}); }
 function isStale(p){ return p.status==='sent'&&daysSince(p.dateSent)>=STALE_DAYS; }
+// Tip-sheet entries age out faster than pitches — sheets are usually issued every month or two,
+// so "fresh" / "aging" / "stale" bands are tighter than the 90-day pitch follow-up threshold.
+const SHEET_FRESH_DAYS = 30, SHEET_AGING_DAYS = 60;
+function sheetAgeStyle(createdAt){
+  var d=daysSince(createdAt);
+  if(d<SHEET_FRESH_DAYS) return {bg:'var(--cut-bg)',co:'var(--cut-co)'};
+  if(d<SHEET_AGING_DAYS) return {bg:'var(--acc-bg)',co:'var(--acc)'};
+  return {bg:'var(--err-bg)',co:'var(--err)'};
+}
+function addedLabel(createdAt){
+  var d=daysSince(createdAt);
+  if(d>=999) return 'Added —';
+  if(d===0) return 'Added today';
+  if(d===1) return 'Added yesterday';
+  return 'Added '+d+'d ago';
+}
 
 // ── SHEET IMPORT: PARSING ENGINE ──────────────────────────────────────────────
 const MONTH_MAP = { jan:0,january:0, feb:1,february:1, mar:2,march:2, apr:3,april:3, may:4,
@@ -233,6 +249,7 @@ function sortByPriority(rows){
 const SORT_OPTIONS = [
   { key:'priority', label:'Priority (default)' },
   { key:'date',     label:'Cut date' },
+  { key:'added',    label:'Date added' },
   { key:'name',     label:'Artist name' },
   { key:'producer', label:'Producer' },
   { key:'label',    label:'Label' },
@@ -252,6 +269,10 @@ function sortRows(rows,key,dir){
     dated.sort(function(a,b){ return dir*a.cutDate.localeCompare(b.cutDate); });
     undated.sort(function(a,b){ return (a.artistName||'').localeCompare(b.artistName||''); });
     return dated.concat(undated);
+  }
+  if(key==='added'){
+    list.sort(function(a,b){ return dir*(new Date(a.createdAt||0).getTime()-new Date(b.createdAt||0).getTime()); });
+    return list;
   }
   if(key==='urgency'){
     list.sort(function(a,b){
@@ -1021,7 +1042,8 @@ function LookingView(props){
                 h('div',{style:{flex:1,minWidth:0,display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}},
                   h('span',{style:{fontWeight:600,fontSize:15}},r.artistName),
                   urgencyPill(r.urgency),
-                  r.selfPenned!=='unclear'&&h('span',{className:'chip',style:{background:r.selfPenned==='open'?'var(--cut-bg)':'var(--err-bg)',color:r.selfPenned==='open'?'var(--cut-co)':'var(--err)',borderColor:'transparent'}},r.selfPenned==='open'?'Open':'Closed')
+                  r.selfPenned!=='unclear'&&h('span',{className:'chip',style:{background:r.selfPenned==='open'?'var(--cut-bg)':'var(--err-bg)',color:r.selfPenned==='open'?'var(--cut-co)':'var(--err)',borderColor:'transparent'}},r.selfPenned==='open'?'Open':'Closed'),
+                  h('span',{className:'chip',title:'Imported '+fmtDate(r.createdAt)+(r.sourceFile?' from "'+r.sourceFile+'"':''),style:Object.assign({borderColor:'transparent'},sheetAgeStyle(r.createdAt))},addedLabel(r.createdAt))
                 ),
                 h('div',{style:{display:'flex',gap:5,flexShrink:0}},
                   r.status==='active'
