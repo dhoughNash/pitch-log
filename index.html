@@ -7,7 +7,6 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/react@18/umd/react.production.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.production.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
@@ -48,14 +47,6 @@
     .sec-title { font-size: 12px; font-weight: 500; text-transform: uppercase; letter-spacing: 1px; color: var(--text2); margin-bottom: 14px; }
     .filter-row { display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 18px; }
     .stale-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--err); margin-right: 4px; vertical-align: middle; }
-    .dropzone { border: 2px dashed var(--border-s); border-radius: 12px; padding: 36px 20px; text-align: center; color: var(--text2); background: var(--card); cursor: pointer; transition: border-color .15s, background .15s; }
-    .dropzone.drag { border-color: var(--acc); background: var(--acc-bg); }
-    .review-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-    .review-table th { text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: var(--text3); padding: 6px 8px; border-bottom: 1px solid var(--border-s); white-space: nowrap; }
-    .review-table td { padding: 5px 8px; border-bottom: 0.5px solid var(--border); vertical-align: top; }
-    .review-table input, .review-table select, .review-table textarea { font-size: 12px; padding: 5px 6px; }
-    .flag-row { background: var(--err-bg); }
-    .urgency-pill { display:inline-block; padding:2px 7px; border-radius:4px; font-size:10px; font-weight:600; letter-spacing:.3px; }
   </style>
 </head>
 <body>
@@ -98,198 +89,6 @@ function genId(){ return Date.now().toString(36)+Math.random().toString(36).slic
 function daysSince(d){ return d?Math.floor((Date.now()-new Date(d))/86400000):999; }
 function fmtDate(d){ if(!d)return'—'; return new Date(d).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}); }
 function isStale(p){ return p.status==='sent'&&daysSince(p.dateSent)>=STALE_DAYS; }
-// Tip-sheet entries age out faster than pitches — sheets are usually issued every month or two,
-// so "fresh" / "aging" / "stale" bands are tighter than the 90-day pitch follow-up threshold.
-const SHEET_FRESH_DAYS = 30, SHEET_AGING_DAYS = 60;
-function sheetAgeStyle(createdAt){
-  var d=daysSince(createdAt);
-  if(d<SHEET_FRESH_DAYS) return {bg:'var(--cut-bg)',co:'var(--cut-co)'};
-  if(d<SHEET_AGING_DAYS) return {bg:'var(--acc-bg)',co:'var(--acc)'};
-  return {bg:'var(--err-bg)',co:'var(--err)'};
-}
-function addedLabel(createdAt){
-  var d=daysSince(createdAt);
-  if(d>=999) return 'Added —';
-  if(d===0) return 'Added today';
-  if(d===1) return 'Added yesterday';
-  return 'Added '+d+'d ago';
-}
-
-// ── SHEET IMPORT: PARSING ENGINE ──────────────────────────────────────────────
-const MONTH_MAP = { jan:0,january:0, feb:1,february:1, mar:2,march:2, apr:3,april:3, may:4,
-  jun:5,june:5, jul:6,july:6, aug:7,august:7, sep:8,sept:8,september:8, oct:9,october:9,
-  nov:10,november:10, dec:11,december:11 };
-const URGENCY_ORDER = { date:0, high:1, soon:2, medium:3, low:4, unclear:5 };
-const URGENCY_LABELS = { date:'Dated', high:'Top priority', soon:'Soon', medium:'Looking', low:'On hold / vague', unclear:'Unclear' };
-
-// Given free text like "CUTTING AUG 29TH." or "CUT JULY 29TH AND 30TH TO FINISH" or "AUG 20TH",
-// try to find a month + day and build an ISO date using refYear. Returns null if no date found.
-function extractDateFromText(text, refYear){
-  if(!text) return null;
-  var re=/\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sept?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+(\d{1,2})(?:st|nd|rd|th)?\b/i;
-  var m=text.match(re);
-  if(!m) return null;
-  var monthKey=m[1].toLowerCase().replace('.','');
-  var monthIdx=MONTH_MAP[monthKey];
-  if(monthIdx===undefined){
-    // try trimmed 3-letter key
-    monthIdx=MONTH_MAP[monthKey.slice(0,3)];
-  }
-  if(monthIdx===undefined) return null;
-  var day=parseInt(m[2],10);
-  if(day<1||day>31) return null;
-  var d=new Date(refYear,monthIdx,day);
-  return d.toISOString().slice(0,10);
-}
-
-// Classify urgency from the raw "cut date" cell text when no concrete date is found.
-function classifyUrgency(text){
-  if(!text) return 'unclear';
-  var t=text.toLowerCase();
-  if(/\b(now|top priority|asap|immediately)\b/.test(t)) return 'high';
-  if(/\bsoon\b/.test(t)) return 'soon';
-  if(/\b(tba|tbd|on hold|not sure|no info)\b/.test(t)) return 'low';
-  if(/\b(looking|cutting|co.?writing|wrapping up|cut before)\b/.test(t)) return 'medium';
-  return 'unclear';
-}
-
-function parseCutDateCell(rawText, refYear){
-  var iso=extractDateFromText(rawText, refYear);
-  return { raw:(rawText||'').trim(), isoDate:iso, urgency: iso?'date':classifyUrgency(rawText) };
-}
-
-// Score whether an artist looks open to outside songs vs. writes/closes their own, based on
-// free text in the "looking for" and "cut date" columns. Returns 'open' | 'closed' | 'unclear'.
-function scoreSelfPenned(text){
-  if(!text) return 'unclear';
-  var t=text.toLowerCase();
-  var openRe=/outside song|outside material|listen to outside|cutting \d+ outside|open to outside|will take (starts|hooks)|send songs|will listen/;
-  var closedRe=/will write (most|it|the)|only doing co.?writes|is a writer\b|writes (his|her|their) own|no outside|closed to outside/;
-  var open=openRe.test(t), closed=closedRe.test(t);
-  if(open&&!closed) return 'open';
-  if(closed&&!open) return 'closed';
-  return 'unclear';
-}
-
-// Pull {name,email} pairs out of a messy multi-contact block like:
-// "FORREST LATTA forrest@averagejoesent.com   MIKE WADSWORTH mike@averagejoesent.com"
-function extractContactsFromText(text){
-  if(!text) return [];
-  var emailRe=/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/g;
-  var found=[]; var m;
-  while((m=emailRe.exec(text))){ found.push({email:m[1], index:m.index, len:m[0].length}); }
-  if(found.length===0) return [];
-  var contacts=[]; var cursor=0;
-  found.forEach(function(e){
-    var chunk=text.slice(cursor,e.index).replace(/[\n\r]+/g,' ').replace(/\s+/g,' ').trim();
-    var nameMatch=chunk.match(/([A-Z][A-Za-z.'-]*(?:\s+[A-Z][A-Za-z.'-]*){0,3})\s*\(?\s*$/);
-    var name=nameMatch?nameMatch[1].trim():chunk.slice(-40).trim();
-    contacts.push({ name:name||'', email:e.email });
-    cursor=e.index+e.len;
-  });
-  return contacts;
-}
-
-// Turn a raw sheet-of-arrays (as produced by XLSX with {header:1}) into a flat list of
-// classified rows: label headers (a record label / roster grouping) and artist entries.
-// Assumes the AUG/SEPT-style layout: col0 Artist, col1 Producer, col2 A&R/contact block,
-// col3 Cut date, col4 Looking for, col5 Management.
-function classifyTipSheetRows(rawRows, refYear){
-  function cell(row,i){ var v=row[i]; return (v===undefined||v===null)?'':String(v).trim(); }
-  // find header row: first row containing 'ARTIST' in col0 or col1
-  var startIdx=0;
-  for(var i=0;i<rawRows.length;i++){
-    var c0=cell(rawRows[i],0).toUpperCase();
-    if(c0==='ARTIST'){ startIdx=i+1; break; }
-  }
-  var out=[]; var currentLabel='';
-  for(var r=startIdx;r<rawRows.length;r++){
-    var row=rawRows[r];
-    var artist=cell(row,0), producer=cell(row,1), ar=cell(row,2), cutRaw=cell(row,3), lookingFor=cell(row,4), mgmt=cell(row,5);
-    var allBlank = !artist&&!producer&&!ar&&!cutRaw&&!lookingFor&&!mgmt;
-    if(allBlank) continue;
-    var isLabelRow = artist && !ar && !cutRaw && !lookingFor;
-    if(isLabelRow){
-      currentLabel=artist.replace(/:\s*\d[\d\-\s]*$/,'').trim(); // strip trailing phone numbers
-      continue;
-    }
-    var flagged = !artist;
-    var cd=parseCutDateCell(cutRaw, refYear);
-    var contacts=extractContactsFromText(ar);
-    var penned=scoreSelfPenned([lookingFor,cutRaw].filter(Boolean).join(' '));
-    out.push({
-      _tmpId: genId(),
-      label: currentLabel,
-      artistName: artist || '(unclear — see label "'+currentLabel+'")',
-      producer: producer,
-      contactRaw: ar,
-      contacts: contacts,
-      cutDateRaw: cd.raw,
-      cutDate: cd.isoDate,
-      urgency: cd.urgency,
-      lookingFor: lookingFor,
-      management: mgmt,
-      selfPenned: penned,
-      flagged: flagged
-    });
-  }
-  return out;
-}
-
-function sortByPriority(rows){
-  return rows.slice().sort(function(a,b){
-    var oa=URGENCY_ORDER[a.urgency]!==undefined?URGENCY_ORDER[a.urgency]:5;
-    var ob=URGENCY_ORDER[b.urgency]!==undefined?URGENCY_ORDER[b.urgency]:5;
-    if(oa!==ob) return oa-ob;
-    if(a.urgency==='date'&&b.urgency==='date') return (a.cutDate||'').localeCompare(b.cutDate||'');
-    return (a.artistName||'').localeCompare(b.artistName||'');
-  });
-}
-
-const SORT_OPTIONS = [
-  { key:'priority', label:'Priority (default)' },
-  { key:'date',     label:'Cut date' },
-  { key:'added',    label:'Date added' },
-  { key:'name',     label:'Artist name' },
-  { key:'producer', label:'Producer' },
-  { key:'label',    label:'Label' },
-  { key:'urgency',  label:'Urgency' },
-];
-
-// General-purpose sort for the Who's Looking dashboard. `dir` is 1 (asc) or -1 (desc).
-// Blank/undated values are always parked at the end regardless of direction, matching
-// how a spreadsheet sort usually behaves.
-function sortRows(rows,key,dir){
-  if(key==='priority') return dir===-1?sortByPriority(rows).reverse():sortByPriority(rows);
-  var list=rows.slice();
-  function blank(v){ return v===undefined||v===null||v===''; }
-  if(key==='date'){
-    var dated=list.filter(function(r){return !blank(r.cutDate);});
-    var undated=list.filter(function(r){return blank(r.cutDate);});
-    dated.sort(function(a,b){ return dir*a.cutDate.localeCompare(b.cutDate); });
-    undated.sort(function(a,b){ return (a.artistName||'').localeCompare(b.artistName||''); });
-    return dated.concat(undated);
-  }
-  if(key==='added'){
-    list.sort(function(a,b){ return dir*(new Date(a.createdAt||0).getTime()-new Date(b.createdAt||0).getTime()); });
-    return list;
-  }
-  if(key==='urgency'){
-    list.sort(function(a,b){
-      var oa=URGENCY_ORDER[a.urgency]!==undefined?URGENCY_ORDER[a.urgency]:5;
-      var ob=URGENCY_ORDER[b.urgency]!==undefined?URGENCY_ORDER[b.urgency]:5;
-      return dir*(oa-ob);
-    });
-    return list;
-  }
-  var field = key==='name'?'artistName':key==='producer'?'producer':key==='label'?'label':null;
-  if(!field) return list;
-  var withVal=list.filter(function(r){return !blank(r[field]);});
-  var withoutVal=list.filter(function(r){return blank(r[field]);});
-  withVal.sort(function(a,b){ return dir*String(a[field]).localeCompare(String(b[field])); });
-  withoutVal.sort(function(a,b){ return (a.artistName||'').localeCompare(b.artistName||''); });
-  return withVal.concat(withoutVal);
-}
 
 // ── DATA MAPPERS ──────────────────────────────────────────────────────────────
 function dbToPitch(db){
@@ -353,84 +152,27 @@ async function removeContact(id){
   if(r.error)throw r.error;
 }
 
-function dbToSheetRow(db){
-  return { id:db.id, label:db.label||'', artistName:db.artist_name||'', producer:db.producer||'',
-    contacts:db.contacts||[], cutDateRaw:db.cut_date_raw||'', cutDate:db.cut_date||null,
-    urgency:db.urgency||'unclear', lookingFor:db.looking_for||'', management:db.management||'',
-    selfPenned:db.self_penned||'unclear', sourceFile:db.source_file||'', status:db.status||'active',
-    flagged:!!db.flagged, createdAt:db.created_at, lastUpdated:db.last_updated };
-}
-function sheetRowToDb(rrow,userId){
-  return { user_id:userId, label:rrow.label||'', artist_name:rrow.artistName||'', producer:rrow.producer||'',
-    contacts:rrow.contacts||[], cut_date_raw:rrow.cutDateRaw||'', cut_date:rrow.cutDate||null,
-    urgency:rrow.urgency||'unclear', looking_for:rrow.lookingFor||'', management:rrow.management||'',
-    self_penned:rrow.selfPenned||'unclear', source_file:rrow.sourceFile||'', status:rrow.status||'active',
-    flagged:!!rrow.flagged, last_updated:new Date().toISOString() };
-}
-async function fetchArtistSheets(){
-  var r=await sb.schema('pitch_log').from('pl_artist_sheets').select('*').order('cut_date',{ascending:true,nullsFirst:false});
-  if(r.error)throw r.error;
-  return (r.data||[]).map(dbToSheetRow);
-}
-async function insertArtistSheetsBatch(rows,userId,sourceFile){
-  var payload=rows.map(function(rrow){ var d=sheetRowToDb(rrow,userId); d.source_file=sourceFile; return d; });
-  var r=await sb.schema('pitch_log').from('pl_artist_sheets').insert(payload);
-  if(r.error)throw r.error;
-}
-async function updateArtistSheetStatus(id,status){
-  var r=await sb.schema('pitch_log').from('pl_artist_sheets').update({status:status,last_updated:new Date().toISOString()}).eq('id',id);
-  if(r.error)throw r.error;
-}
-async function removeArtistSheet(id){
-  var r=await sb.schema('pitch_log').from('pl_artist_sheets').delete().eq('id',id);
-  if(r.error)throw r.error;
-}
-
-function dbToWritingStats(db){
-  return { id:db.id, artistNameKey:db.artist_name_key, artistName:db.artist_name||'',
-    coWritePct:db.co_write_pct, outsidePct:db.outside_pct, songsSampled:db.songs_sampled||[],
-    confidence:db.confidence||'low', notes:db.notes||'', sources:db.sources||[],
-    researchedAt:db.researched_at };
-}
-async function fetchWritingStats(){
-  var r=await sb.schema('pitch_log').from('pl_artist_writing_stats').select('*');
-  if(r.error)throw r.error;
-  return (r.data||[]).map(dbToWritingStats);
-}
-async function upsertWritingStats(stats,userId){
-  var row={
-    user_id:userId,
-    artist_name_key:stats.artistName.trim().toLowerCase(),
-    artist_name:stats.artistName,
-    co_write_pct:stats.coWritePct,
-    outside_pct:stats.outsidePct,
-    songs_sampled:stats.songsSampled||[],
-    confidence:stats.confidence||'low',
-    notes:stats.notes||'',
-    sources:stats.sources||[],
-    researched_at:new Date().toISOString()
-  };
-  var r=await sb.schema('pitch_log').from('pl_artist_writing_stats').upsert(row,{onConflict:'user_id,artist_name_key'});
-  if(r.error)throw r.error;
-}
-
 // ── AI SEARCH ─────────────────────────────────────────────────────────────────
 async function aiSearchContacts(artist){
+  var s=await sb.auth.getSession();
+  var token=s&&s.data&&s.data.session?s.data.session.access_token:null;
+  if(!token) throw new Error('Your session has expired. Please sign out and sign back in.');
+
   var r=await fetch('/.netlify/functions/search-contact',{
     method:'POST',
-    headers:{'Content-Type':'application/json'},
+    headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},
     body:JSON.stringify({artist:artist})
   });
-  if(!r.ok) throw new Error('Search failed ('+r.status+')');
+
+  if(r.status===403) throw new Error('Your account does not have access to AI Lookup. Contact the app owner.');
+  if(r.status===429) throw new Error('You have reached today\u2019s AI Lookup limit (20 per day). Try again tomorrow.');
+  if(r.status===502) throw new Error('AI Lookup is temporarily unavailable. Please try again in a moment.');
+  if(!r.ok){
+    var msg='';
+    try{ var body=await r.json(); msg=body&&body.error?body.error:''; }catch(e){}
+    throw new Error(msg||('Search failed ('+r.status+')'));
+  }
   return await r.json();
-}
-async function triggerWritingHistoryResearch(artist,userId,accessToken){
-  var r=await fetch('/.netlify/functions/writing-history-background',{
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({artist:artist,userId:userId,accessToken:accessToken})
-  });
-  if(!r.ok) throw new Error('Could not start research ('+r.status+')');
 }
 
 // ── SHARED COMPONENTS ─────────────────────────────────────────────────────────
@@ -632,32 +374,25 @@ function ContactsView(props){
       :h('div',{className:'list'},
           shown.map(function(c){
             var pc=pitchCount(c.id);
-            return h('div',{key:c.id,className:'list-item',style:{flexDirection:'column',alignItems:'stretch',gap:0,padding:'14px 16px'}},
-              // header row: avatar, name, role, actions
-              h('div',{style:{display:'flex',alignItems:'center',gap:12}},
-                h(Avatar,{name:c.name}),
-                h('div',{style:{flex:1,minWidth:0,display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}},
+            return h('div',{key:c.id,className:'list-item'},
+              h(Avatar,{name:c.name}),
+              h('div',{style:{flex:1,minWidth:0}},
+                h('div',{style:{display:'flex',alignItems:'center',gap:8,marginBottom:3}},
                   h('span',{style:{fontWeight:600,fontSize:15}},c.name),
                   c.role&&h('span',{className:'chip',style:{background:'var(--card2)',color:'var(--text2)',borderColor:'var(--border-s)',fontSize:9}},c.role)
                 ),
-                h('div',{style:{display:'flex',gap:5,flexShrink:0}},
-                  h(Btn,{onClick:function(){onEdit(c);}},'Edit'),
-                  h(Btn,{onClick:function(){if(confirm('Delete this contact?'))onDelete(c.id);},cls:'dan'},'✕')
-                )
+                h('div',{style:{fontSize:13,color:'var(--text2)'}},
+                  [c.company,c.artistConnection&&('('+c.artistConnection+')')].filter(Boolean).join(' ')||'—'
+                ),
+                h('div',{style:{fontSize:12,color:'var(--text3)',marginTop:2}},[c.email,c.phone].filter(Boolean).join(' · ')||'No contact info')
               ),
-              // labeled info grid — always renders all 4 slots in the same position so
-              // columns line up card-to-card, even when a contact is missing some fields
-              h('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'10px 24px',margin:'12px 0 0',paddingTop:12,borderTop:'0.5px solid var(--border)'}},
-                h('div',null,h('div',{className:'lbl',style:{marginBottom:2}},'Company'),h('div',{style:{fontSize:13,color:c.company?'var(--text)':'var(--text3)'}},c.company||'—')),
-                h('div',null,h('div',{className:'lbl',style:{marginBottom:2}},'Artist'),h('div',{style:{fontSize:13,color:c.artistConnection?'var(--text)':'var(--text3)'}},c.artistConnection||'—')),
-                h('div',null,h('div',{className:'lbl',style:{marginBottom:2}},'Email'),h('div',{style:{fontSize:13,color:c.email?'var(--info)':'var(--text3)'}},c.email||'—')),
-                h('div',null,h('div',{className:'lbl',style:{marginBottom:2}},'Phone'),h('div',{style:{fontSize:13,color:c.phone?'var(--text)':'var(--text3)'}},c.phone||'—'))
+              h('div',{style:{textAlign:'right',flexShrink:0}},
+                pc>0&&h('div',{style:{fontSize:12,color:'var(--acc)',fontWeight:500}},pc+' pitch'+(pc!==1?'es':'')),
+                c.lastVerified&&h('div',{style:{fontSize:11,color:'var(--text3)',marginTop:2}},'Verified '+fmtDate(c.lastVerified))
               ),
-              c.notes&&h('div',{style:{fontSize:12,color:'var(--text3)',fontStyle:'italic',marginTop:10}},c.notes),
-              // footer: pitch count + last verified
-              (pc>0||c.lastVerified)&&h('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginTop:12,paddingTop:10,borderTop:'0.5px solid var(--border)',fontSize:11,color:'var(--text3)'}},
-                h('span',null,pc>0?(pc+' pitch'+(pc!==1?'es':'')):''),
-                c.lastVerified&&h('span',null,'Verified '+fmtDate(c.lastVerified))
+              h('div',{style:{display:'flex',gap:5}},
+                h(Btn,{onClick:function(){onEdit(c);}},'Edit'),
+                h(Btn,{onClick:function(){if(confirm('Delete this contact?'))onDelete(c.id);},cls:'dan'},'✕')
               )
             );
           })
@@ -710,7 +445,7 @@ function FinderView(props){
     aiSearchContacts(artist.trim()).then(function(r){
       if(r.error){setError(r.error);}
       else setResults(r);
-    }).catch(function(err){setError('Search failed. Make sure ANTHROPIC_API_KEY is set in Netlify environment variables.');})
+    }).catch(function(err){setError(err&&err.message?err.message:'Search failed. Please try again.');})
     .finally(function(){setLoading(false);});
   }
 
@@ -751,7 +486,7 @@ function FinderView(props){
 
   return h('div',null,
     h('h1',{style:{fontSize:20,fontWeight:600,margin:'0 0 6px'}},'AI contact lookup'),
-    h('p',{style:{fontSize:13,color:'var(--text2)',margin:'0 0 22px'}},'Enter an artist name to find their current manager, A&R, and publisher. Takes 10–20 seconds.'),
+    h('p',{style:{fontSize:13,color:'var(--text2)',margin:'0 0 22px'}},'Enter an artist name to find their current manager, A&R, and publisher. Takes 10–20 seconds. Limited to 20 lookups per day.'),
     h('div',{style:{display:'flex',gap:8,marginBottom:24}},
       h('input',{className:'inp',value:artist,onChange:function(e){setArtist(e.target.value);},onKeyDown:function(e){if(e.key==='Enter')doSearch();},placeholder:'"Cody Johnson", "Riley Green", "Lainey Wilson"...',style:{flex:1}}),
       h(Btn,{onClick:doSearch,disabled:loading,cls:'pro',style:{padding:'8px 18px',fontSize:13}},loading?'Searching...':'✦ Search')
@@ -774,326 +509,6 @@ function FinderView(props){
   );
 }
 
-// ── IMPORT SHEET VIEW ─────────────────────────────────────────────────────────
-function ImportView(props){
-  var onSaved=props.onSaved,userId=props.userId;
-  var _drag=useState(false),dragging=_drag[0],setDragging=_drag[1];
-  var _rows=useState(null),rows=_rows[0],setRows=_rows[1];
-  var _file=useState(''),fileName=_file[0],setFileName=_file[1];
-  var _year=useState(new Date().getFullYear()),refYear=_year[0],setRefYear=_year[1];
-  var _err=useState(''),error=_err[0],setError=_err[1];
-  var _saving=useState(false),saving=_saving[0],setSaving=_saving[1];
-
-  function processFile(file){
-    setError('');setRows(null);
-    if(!file) return;
-    setFileName(file.name);
-    var reader=new FileReader();
-    reader.onload=function(e){
-      try{
-        var data=new Uint8Array(e.target.result);
-        var wb=XLSX.read(data,{type:'array'});
-        var sheetName=wb.SheetNames[0];
-        var sheet=wb.Sheets[sheetName];
-        var raw=XLSX.utils.sheet_to_json(sheet,{header:1,defval:''});
-        var classified=classifyTipSheetRows(raw,refYear);
-        if(classified.length===0){
-          setError('No artist rows found — this sheet\'s layout may not match the expected Artist / Producer / A&R / Cut Date / Looking For / Management format.');
-        }
-        setRows(classified);
-      }catch(err){
-        setError('Could not read this file: '+err.message);
-      }
-    };
-    reader.readAsArrayBuffer(file);
-  }
-
-  function onDrop(e){
-    e.preventDefault();setDragging(false);
-    var file=e.dataTransfer.files&&e.dataTransfer.files[0];
-    processFile(file);
-  }
-  function onPick(e){
-    var file=e.target.files&&e.target.files[0];
-    processFile(file);
-  }
-  function setRow(idx,patch){
-    setRows(function(rs){ return rs.map(function(r,i){ return i===idx?Object.assign({},r,patch):r; }); });
-  }
-  function removeRow(idx){
-    setRows(function(rs){ return rs.filter(function(_,i){return i!==idx;}); });
-  }
-  function saveAll(){
-    if(!rows||rows.length===0)return;
-    setSaving(true);
-    insertArtistSheetsBatch(rows,userId,fileName).then(function(){
-      setSaving(false);setRows(null);setFileName('');
-      onSaved();
-    }).catch(function(err){setSaving(false);setError(err.message);});
-  }
-
-  return h('div',null,
-    h('h1',{style:{fontSize:20,fontWeight:600,margin:'0 0 6px'}},'Import a tip sheet'),
-    h('p',{style:{fontSize:13,color:'var(--text2)',margin:'0 0 18px'}},'Drop an Excel tip sheet in and review the extracted entries before saving.'),
-    !rows&&h('div',null,
-      h('div',{style:{marginBottom:14,display:'flex',alignItems:'center',gap:10}},
-        h('label',{className:'lbl',style:{marginBottom:0}},'Sheet year'),
-        h('input',{className:'inp',type:'number',value:refYear,onChange:function(e){setRefYear(parseInt(e.target.value,10)||new Date().getFullYear());},style:{width:100}}),
-        h('span',{style:{fontSize:12,color:'var(--text3)'}},'used to resolve dates like "Aug 29th"')
-      ),
-      h('div',{
-        className:'dropzone'+(dragging?' drag':''),
-        onDragOver:function(e){e.preventDefault();setDragging(true);},
-        onDragLeave:function(){setDragging(false);},
-        onDrop:onDrop,
-        onClick:function(){document.getElementById('sheet-file-input').click();}
-      },
-        h('div',{style:{fontSize:28,marginBottom:8}},'📄'),
-        h('div',{style:{fontSize:14,marginBottom:4}},'Drag & drop a tip sheet here'),
-        h('div',{style:{fontSize:12,color:'var(--text3)'}},'or click to browse — .xlsx / .xls / .csv'),
-        h('input',{id:'sheet-file-input',type:'file',accept:'.xlsx,.xls,.csv',style:{display:'none'},onChange:onPick})
-      )
-    ),
-    error&&h('div',{style:{background:'var(--err-bg)',border:'0.5px solid var(--err-bo)',borderRadius:12,padding:14,fontSize:13,color:'var(--err)',marginTop:14}},error),
-    rows&&h('div',{style:{marginTop:16}},
-      h('div',{style:{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10}},
-        h('div',{style:{fontSize:13,color:'var(--text2)'}},rows.length+' entries found in "'+fileName+'" — review, edit, then save'),
-        h('div',{style:{display:'flex',gap:8}},
-          h(Btn,{onClick:function(){setRows(null);setFileName('');},cls:'sec'},'Start over'),
-          h(Btn,{onClick:saveAll,disabled:saving,cls:'acc'},saving?'Saving...':'Save all to Who\'s Looking')
-        )
-      ),
-      h('div',{style:{overflowX:'auto'}},
-        h('table',{className:'review-table'},
-          h('thead',null,h('tr',null,
-            ['Label','Artist','Producer','Contacts','Cut date','Urgency','Looking for','Self-penned','Mgmt',''].map(function(c){return h('th',{key:c},c);})
-          )),
-          h('tbody',null,
-            rows.map(function(r,idx){
-              return h('tr',{key:r._tmpId,className:r.flagged?'flag-row':''},
-                h('td',null,h('input',{className:'inp',value:r.label,onChange:function(e){setRow(idx,{label:e.target.value});},style:{minWidth:110}})),
-                h('td',null,h('input',{className:'inp',value:r.artistName,onChange:function(e){setRow(idx,{artistName:e.target.value});},style:{minWidth:130}})),
-                h('td',null,h('input',{className:'inp',value:r.producer,onChange:function(e){setRow(idx,{producer:e.target.value});},style:{minWidth:110}})),
-                h('td',null,h('textarea',{className:'inp',rows:2,value:(r.contacts||[]).map(function(c){return c.name+' <'+c.email+'>';}).join('\n'),onChange:function(e){
-                  var parsed=e.target.value.split('\n').filter(Boolean).map(function(line){
-                    var m=line.match(/^(.*?)\s*<(.+?)>\s*$/);
-                    return m?{name:m[1].trim(),email:m[2].trim()}:{name:line.trim(),email:''};
-                  });
-                  setRow(idx,{contacts:parsed});
-                },style:{minWidth:170}})),
-                h('td',null,h('input',{className:'inp',value:r.cutDateRaw,onChange:function(e){
-                  var patch={cutDateRaw:e.target.value};
-                  var iso=extractDateFromText(e.target.value,refYear);
-                  patch.cutDate=iso; patch.urgency=iso?'date':classifyUrgency(e.target.value);
-                  setRow(idx,patch);
-                },style:{minWidth:150}})),
-                h('td',null,h('select',{className:'inp',value:r.urgency,onChange:function(e){setRow(idx,{urgency:e.target.value});},style:{minWidth:110}},
-                  Object.keys(URGENCY_LABELS).map(function(k){return h('option',{key:k,value:k},URGENCY_LABELS[k]);})
-                )),
-                h('td',null,h('textarea',{className:'inp',rows:2,value:r.lookingFor,onChange:function(e){setRow(idx,{lookingFor:e.target.value});},style:{minWidth:200}})),
-                h('td',null,h('select',{className:'inp',value:r.selfPenned,onChange:function(e){setRow(idx,{selfPenned:e.target.value});},style:{minWidth:90}},
-                  h('option',{value:'open'},'Open'),h('option',{value:'closed'},'Closed'),h('option',{value:'unclear'},'Unclear')
-                )),
-                h('td',null,h('input',{className:'inp',value:r.management,onChange:function(e){setRow(idx,{management:e.target.value});},style:{minWidth:130}})),
-                h('td',null,h(Btn,{onClick:function(){removeRow(idx);},cls:'dan'},'✕'))
-              );
-            })
-          )
-        )
-      )
-    )
-  );
-}
-
-// ── WHO'S LOOKING VIEW ────────────────────────────────────────────────────────
-function LookingView(props){
-  var sheetRows=props.sheetRows,onArchive=props.onArchive,onDelete=props.onDelete,onSwitchToImport=props.onSwitchToImport;
-  var writingStats=props.writingStats,onResearchWriting=props.onResearchWriting,researching=props.researching;
-  var contacts=props.contacts,onSaveContact=props.onSaveContact;
-  var _f=useState('active'),filter=_f[0],setFilter=_f[1];
-  var _sk=useState('priority'),sortKey=_sk[0],setSortKey=_sk[1];
-  var _sd=useState(1),sortDir=_sd[0],setSortDir=_sd[1];
-  var _cs=useState({}),contactSaveState=_cs[0],setContactSaveState=_cs[1];
-  var filtered=sheetRows.filter(function(r){return filter==='all'?true:r.status===filter;});
-  var shown=sortRows(filtered,sortKey,sortDir);
-  var openCount=sheetRows.filter(function(r){return r.selfPenned==='open';}).length;
-  var closedCount=sheetRows.filter(function(r){return r.selfPenned==='closed';}).length;
-  var unclearCount=sheetRows.filter(function(r){return r.selfPenned==='unclear';}).length;
-  var total=sheetRows.length||1;
-
-  var statsMap={};
-  writingStats.forEach(function(s){statsMap[s.artistNameKey]=s;});
-  function statsFor(artistName){ return statsMap[(artistName||'').trim().toLowerCase()]; }
-
-  // Match a tip-sheet contact against the existing contact database: email match first
-  // (more reliable), falling back to an exact name match.
-  function findMatchingContact(ct){
-    if(!ct) return null;
-    var emailL=(ct.email||'').trim().toLowerCase();
-    var nameL=(ct.name||'').trim().toLowerCase();
-    if(emailL){
-      var byEmail=contacts.find(function(c){return c.email&&c.email.trim().toLowerCase()===emailL;});
-      if(byEmail) return byEmail;
-    }
-    if(nameL){
-      var byName=contacts.find(function(c){return c.name&&c.name.trim().toLowerCase()===nameL;});
-      if(byName) return byName;
-    }
-    return null;
-  }
-
-  function handleAddContact(sheetRow,ct,key,existing){
-    var merged = existing
-      ? Object.assign({},existing,{
-          email: existing.email || ct.email || '',
-          artistConnection: existing.artistConnection || sheetRow.artistName || '',
-          company: existing.company || sheetRow.label || '',
-          lastVerified: new Date().toISOString().slice(0,10)
-        })
-      : {
-          id: genId(),
-          name: ct.name || '',
-          role: 'A&R',
-          company: sheetRow.label || '',
-          artistConnection: sheetRow.artistName || '',
-          email: ct.email || '',
-          phone: '',
-          notes: 'Added from tip sheet import'+(sheetRow.sourceFile?' ('+sheetRow.sourceFile+')':''),
-          lastVerified: new Date().toISOString().slice(0,10)
-        };
-    onSaveContact(merged,!!existing).then(function(){
-      setContactSaveState(function(s){var o=Object.assign({},s);o[key]=existing?'merged':'new';return o;});
-    }).catch(function(){});
-  }
-
-  function urgencyPill(u){
-    var cfg={ date:{bg:'var(--cut-bg)',co:'var(--cut-co)'}, high:{bg:'var(--err-bg)',co:'var(--err)'},
-      soon:{bg:'var(--acc-bg)',co:'var(--acc)'}, medium:{bg:'var(--hold-bg)',co:'var(--hold-co)'},
-      low:{bg:'var(--passed-bg)',co:'var(--passed-co)'}, unclear:{bg:'var(--passed-bg)',co:'var(--passed-co)'} }[u]||{bg:'var(--passed-bg)',co:'var(--passed-co)'};
-    return h('span',{className:'urgency-pill',style:{background:cfg.bg,color:cfg.co}},URGENCY_LABELS[u]||u);
-  }
-
-  function WritingBadge(rProps){
-    var artistName=rProps.artistName;
-    var stats=statsFor(artistName);
-    var isLoading=researching[artistName.trim().toLowerCase()];
-    if(isLoading){
-      return h('span',{style:{fontSize:11,color:'var(--text3)'}},'Researching writing history...');
-    }
-    if(stats){
-      var confColor=stats.confidence==='high'?'var(--ok)':stats.confidence==='medium'?'var(--acc)':'var(--text3)';
-      return h('div',{style:{display:'flex',alignItems:'center',gap:8,marginTop:4,flexWrap:'wrap'}},
-        h('span',{className:'chip',style:{background:'var(--hold-bg)',color:'var(--hold-co)',borderColor:'transparent'}},
-          (stats.coWritePct!=null?stats.coWritePct:'?')+'% co-write / '+(stats.outsidePct!=null?stats.outsidePct:'?')+'% outside'
-        ),
-        h('span',{style:{fontSize:10,color:confColor,fontWeight:600,textTransform:'uppercase',letterSpacing:.5}},stats.confidence+' confidence'),
-        h('button',{onClick:function(){onResearchWriting(artistName);},style:{fontSize:11,color:'var(--text3)',background:'none',border:'none',cursor:'pointer',textDecoration:'underline'}},'Refresh')
-      );
-    }
-    return h(Btn,{onClick:function(){onResearchWriting(artistName);},cls:'pro',style:{fontSize:11,padding:'4px 9px',marginTop:4}},'✦ Research writing history');
-  }
-
-  return h('div',null,
-    h('div',{style:{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:16}},
-      h('div',null,
-        h('h1',{style:{fontSize:20,fontWeight:600,margin:0}},'Who\'s Looking'),
-        h('p',{style:{fontSize:13,color:'var(--text2)',margin:'3px 0 0'}},sheetRows.length+' entries from imported tip sheets')
-      ),
-      h(Btn,{onClick:onSwitchToImport,cls:'acc'},'⬆ Import a sheet')
-    ),
-    h('div',{style:{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:8,marginBottom:18}},
-      h('div',{className:'metric'},
-        h('div',{style:{fontSize:10,color:'var(--text3)',textTransform:'uppercase',letterSpacing:1,marginBottom:3}},'Open to outside'),
-        h('div',{style:{fontSize:20,fontWeight:600,color:'var(--ok)'}},openCount+' ('+Math.round(100*openCount/total)+'%)')
-      ),
-      h('div',{className:'metric'},
-        h('div',{style:{fontSize:10,color:'var(--text3)',textTransform:'uppercase',letterSpacing:1,marginBottom:3}},'Writes own / closed'),
-        h('div',{style:{fontSize:20,fontWeight:600,color:'var(--err)'}},closedCount+' ('+Math.round(100*closedCount/total)+'%)')
-      ),
-      h('div',{className:'metric'},
-        h('div',{style:{fontSize:10,color:'var(--text3)',textTransform:'uppercase',letterSpacing:1,marginBottom:3}},'Unclear'),
-        h('div',{style:{fontSize:20,fontWeight:600,color:'var(--text2)'}},unclearCount)
-      )
-    ),
-    h('div',{style:{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:10,marginBottom:14}},
-      h('div',{className:'filter-row',style:{marginBottom:0}},
-        ['active','archived','all'].map(function(f){
-          return h('button',{key:f,onClick:function(){setFilter(f);},className:'btn btn-'+(filter===f?'acc':'sec')},f.charAt(0).toUpperCase()+f.slice(1));
-        })
-      ),
-      h('div',{style:{display:'flex',alignItems:'center',gap:6}},
-        h('label',{style:{fontSize:11,color:'var(--text3)',textTransform:'uppercase',letterSpacing:1}},'Sort by'),
-        h('select',{className:'inp',value:sortKey,onChange:function(e){setSortKey(e.target.value);},style:{minWidth:150}},
-          SORT_OPTIONS.map(function(o){return h('option',{key:o.key,value:o.key},o.label);})
-        ),
-        h('button',{onClick:function(){setSortDir(function(d){return d*-1;});},className:'btn btn-sec',title:'Toggle direction'},sortDir===1?'↑ Asc':'↓ Desc')
-      )
-    ),
-    shown.length===0
-      ?h('div',{className:'empty'},
-          h('div',{style:{fontSize:32,marginBottom:12}},'📋'),
-          h('div',{style:{fontSize:15,color:'var(--text2)'}},'No entries yet — import a tip sheet to get started')
-        )
-      :h('div',{className:'list'},
-          shown.map(function(r){
-            return h('div',{key:r.id,className:'list-item',style:{flexDirection:'column',alignItems:'stretch',gap:0,padding:'14px 16px'}},
-              // header row: artist name + status pills, actions
-              h('div',{style:{display:'flex',alignItems:'center',gap:12}},
-                h('div',{style:{flex:1,minWidth:0,display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}},
-                  h('span',{style:{fontWeight:600,fontSize:15}},r.artistName),
-                  urgencyPill(r.urgency),
-                  r.selfPenned!=='unclear'&&h('span',{className:'chip',style:{background:r.selfPenned==='open'?'var(--cut-bg)':'var(--err-bg)',color:r.selfPenned==='open'?'var(--cut-co)':'var(--err)',borderColor:'transparent'}},r.selfPenned==='open'?'Open':'Closed'),
-                  h('span',{className:'chip',title:'Imported '+fmtDate(r.createdAt)+(r.sourceFile?' from "'+r.sourceFile+'"':''),style:Object.assign({borderColor:'transparent'},sheetAgeStyle(r.createdAt))},addedLabel(r.createdAt))
-                ),
-                h('div',{style:{display:'flex',gap:5,flexShrink:0}},
-                  r.status==='active'
-                    ?h(Btn,{onClick:function(){onArchive(r.id,'archived');}},'Archive')
-                    :h(Btn,{onClick:function(){onArchive(r.id,'active');}},'Reactivate'),
-                  h(Btn,{onClick:function(){if(confirm('Delete this entry?'))onDelete(r.id);},cls:'dan'},'✕')
-                )
-              ),
-              // labeled info grid — fixed 2x2 slots, same position on every card
-              h('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'10px 24px',margin:'12px 0 0',paddingTop:12,borderTop:'0.5px solid var(--border)'}},
-                h('div',null,h('div',{className:'lbl',style:{marginBottom:2}},'Label'),h('div',{style:{fontSize:13,color:r.label?'var(--text)':'var(--text3)'}},r.label||'—')),
-                h('div',null,h('div',{className:'lbl',style:{marginBottom:2}},'Producer'),h('div',{style:{fontSize:13,color:r.producer?'var(--text)':'var(--text3)'}},r.producer||'—')),
-                h('div',null,h('div',{className:'lbl',style:{marginBottom:2}},'Cut date'),h('div',{style:{fontSize:13,color:r.cutDateRaw?'var(--text)':'var(--text3)'}},r.cutDate?fmtDate(r.cutDate):(r.cutDateRaw||'—'))),
-                h('div',null,h('div',{className:'lbl',style:{marginBottom:2}},'Management'),h('div',{style:{fontSize:13,color:r.management?'var(--text)':'var(--text3)'}},r.management||'—'))
-              ),
-              // full-width labeled blocks — always present, placeholder when empty
-              h('div',{style:{marginTop:10}},
-                h('div',{className:'lbl',style:{marginBottom:2}},'Looking for'),
-                h('div',{style:{fontSize:13,color:r.lookingFor?'var(--text2)':'var(--text3)'}},r.lookingFor||'—')
-              ),
-              h('div',{style:{marginTop:10}},
-                h('div',{className:'lbl',style:{marginBottom:4}},'Contacts'),
-                (r.contacts&&r.contacts.length>0)
-                  ?h('div',{style:{display:'flex',flexDirection:'column',gap:5}},
-                      r.contacts.map(function(ct,ci){
-                        var key=r.id+'-'+ci;
-                        var state=contactSaveState[key];
-                        var existing=state?null:findMatchingContact(ct);
-                        return h('div',{key:ci,style:{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8}},
-                          h('span',{style:{fontSize:12,color:'var(--info)'}},ct.name+(ct.email?' <'+ct.email+'>':'')),
-                          state
-                            ?h('span',{style:{fontSize:11,color:'var(--ok)',fontWeight:600,flexShrink:0}},state==='merged'?'✓ Updated existing':'✓ Added')
-                            :h(Btn,{onClick:function(){handleAddContact(r,ct,key,existing);},cls:existing?'sec':'acc',style:{fontSize:10,padding:'3px 8px',flexShrink:0}},existing?'Merge into existing':'+ Add to contacts')
-                        );
-                      })
-                    )
-                  :h('div',{style:{fontSize:12,color:'var(--text3)'}},'—')
-              ),
-              // footer: writing-history lookup
-              h('div',{style:{marginTop:12,paddingTop:10,borderTop:'0.5px solid var(--border)'}},
-                r.flagged
-                  ?h('div',{style:{fontSize:11,color:'var(--text3)',fontStyle:'italic'}},'Artist name unclear on this row — fix it in the sheet before researching writing history')
-                  :h(WritingBadge,{artistName:r.artistName})
-              )
-            );
-          })
-        )
-  );
-}
-
 // ── ROOT APP ──────────────────────────────────────────────────────────────────
 function App(){
   var _a=useState('loading'),authState=_a[0],setAuthState=_a[1];
@@ -1103,9 +518,6 @@ function App(){
   var _c=useState(null),current=_c[0],setCurrent=_c[1];
   var _p=useState([]),pitches=_p[0],setPitches=_p[1];
   var _ct=useState([]),contacts=_ct[0],setContacts=_ct[1];
-  var _sr=useState([]),sheetRows=_sr[0],setSheetRows=_sr[1];
-  var _ws=useState([]),writingStats=_ws[0],setWritingStats=_ws[1];
-  var _rs=useState({}),researching=_rs[0],setResearching=_rs[1];
   var _dl=useState(false),dataLoading=_dl[0],setDataLoading=_dl[1];
   var _ae=useState(''),appError=_ae[0],setAppError=_ae[1];
 
@@ -1124,8 +536,8 @@ function App(){
   useEffect(function(){
     if(authState!=='authenticated'||!user)return;
     setDataLoading(true);
-    Promise.all([fetchPitches(),fetchContacts(),fetchArtistSheets(),fetchWritingStats()]).then(function(results){
-      setPitches(results[0]);setContacts(results[1]);setSheetRows(results[2]);setWritingStats(results[3]);
+    Promise.all([fetchPitches(),fetchContacts()]).then(function(results){
+      setPitches(results[0]);setContacts(results[1]);
     }).catch(function(err){setAppError(err.message);}).finally(function(){setDataLoading(false);});
   },[authState,user&&user.id]);
 
@@ -1143,53 +555,10 @@ function App(){
   }
   function handleSaveContact(contact,isUpdate){
     var op=isUpdate?updateContact(contact,user.id):insertContact(contact,user.id);
-    return op.then(function(){return fetchContacts();}).then(function(updated){setContacts(updated);return updated;}).catch(function(err){setAppError(err.message);throw err;});
+    op.then(function(){return fetchContacts();}).then(function(updated){setContacts(updated);}).catch(function(err){setAppError(err.message);});
   }
   function handleDeleteContact(id){
     removeContact(id).then(function(){setContacts(function(c){return c.filter(function(x){return x.id!==id;});});}).catch(function(err){setAppError(err.message);});
-  }
-  function handleSheetImported(){
-    fetchArtistSheets().then(function(rows){setSheetRows(rows);setTab('looking');goList();}).catch(function(err){setAppError(err.message);});
-  }
-  function handleArchiveSheetRow(id,status){
-    updateArtistSheetStatus(id,status).then(function(){setSheetRows(function(rs){return rs.map(function(r){return r.id===id?Object.assign({},r,{status:status}):r;});});}).catch(function(err){setAppError(err.message);});
-  }
-  function handleDeleteSheetRow(id){
-    removeArtistSheet(id).then(function(){setSheetRows(function(rs){return rs.filter(function(r){return r.id!==id;});});}).catch(function(err){setAppError(err.message);});
-  }
-  function pollForWritingStats(key,startedAt,attempt){
-    attempt=attempt||0;
-    if(attempt>25){
-      setAppError('Writing history research for "'+key+'" is taking longer than expected — it may still finish in the background, check back in a bit.');
-      setResearching(function(r){var o=Object.assign({},r);delete o[key];return o;});
-      return;
-    }
-    setTimeout(function(){
-      fetchWritingStats().then(function(all){
-        var found=all.find(function(s){return s.artistNameKey===key && new Date(s.researchedAt)>startedAt;});
-        if(found){
-          setWritingStats(all);
-          setResearching(function(r){var o=Object.assign({},r);delete o[key];return o;});
-        } else {
-          pollForWritingStats(key,startedAt,attempt+1);
-        }
-      }).catch(function(){ pollForWritingStats(key,startedAt,attempt+1); });
-    },4000);
-  }
-  function handleResearchWriting(artistName){
-    var key=artistName.trim().toLowerCase();
-    setResearching(function(r){var o=Object.assign({},r);o[key]=true;return o;});
-    var startedAt=new Date();
-    sb.auth.getSession().then(function(sessionRes){
-      var token=sessionRes.data&&sessionRes.data.session&&sessionRes.data.session.access_token;
-      if(!token) throw new Error('Not signed in');
-      return triggerWritingHistoryResearch(artistName,user.id,token);
-    }).then(function(){
-      pollForWritingStats(key,startedAt,0);
-    }).catch(function(err){
-      setAppError(err.message);
-      setResearching(function(r){var o=Object.assign({},r);delete o[key];return o;});
-    });
   }
 
   if(authState==='loading'||dataLoading){
@@ -1197,7 +566,7 @@ function App(){
   }
   if(authState==='unauthenticated') return h(LoginScreen,null);
 
-  var TABS=[{id:'pitches',label:'Pitches'},{id:'contacts',label:'Contacts'},{id:'looking',label:'Who\'s Looking'},{id:'import',label:'\u2B06 Import Sheet'},{id:'finder',label:'\u2726 AI Lookup'}];
+  var TABS=[{id:'pitches',label:'Pitches'},{id:'contacts',label:'Contacts'},{id:'finder',label:'\u2726 AI Lookup'}];
 
   return h('div',null,
     appError&&h('div',{style:{background:'var(--err-bg)',borderBottom:'0.5px solid var(--err-bo)',padding:'10px 20px',fontSize:13,color:'var(--err)',display:'flex',alignItems:'center',justifyContent:'space-between'}},
@@ -1222,9 +591,7 @@ function App(){
       tab==='pitches'&&view==='form'&&h(PitchForm,{pitch:current,contacts:contacts,onCancel:goList,onSave:handleSavePitch}),
       tab==='contacts'&&view==='list'&&h(ContactsView,{contacts:contacts,pitches:pitches,onNew:function(){setCurrent(null);setView('form');},onEdit:function(c){setCurrent(c);setView('form');},onDelete:handleDeleteContact,onFinder:function(){setTab('finder');goList();}}),
       tab==='contacts'&&view==='form'&&h(ContactForm,{contact:current,onCancel:goList,onSave:function(form){handleSaveContact(form,!!current);goList();}}),
-      tab==='finder'&&h(FinderView,{existingContacts:contacts,onSaveContact:handleSaveContact,onSwitchTab:function(t){setTab(t);goList();}}),
-      tab==='import'&&h(ImportView,{userId:user.id,onSaved:handleSheetImported}),
-      tab==='looking'&&h(LookingView,{sheetRows:sheetRows,onArchive:handleArchiveSheetRow,onDelete:handleDeleteSheetRow,onSwitchToImport:function(){setTab('import');goList();},writingStats:writingStats,onResearchWriting:handleResearchWriting,researching:researching,contacts:contacts,onSaveContact:handleSaveContact})
+      tab==='finder'&&h(FinderView,{existingContacts:contacts,onSaveContact:handleSaveContact,onSwitchTab:function(t){setTab(t);goList();}})
     )
   );
 }
