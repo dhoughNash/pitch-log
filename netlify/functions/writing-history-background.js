@@ -2,6 +2,11 @@
 // Netlify returns 202 immediately on invocation; this keeps running for up to 15 minutes
 // and writes its result straight into Supabase rather than returning it over HTTP.
 
+// Gate: guest-list check + daily cap, enforced in the database via Supabase RPC.
+// Currently shares the same function (and the 20/day cap) as AI Lookup.
+// To give research its own counter later, ask MasterBus for a new function and change this one name.
+const GATE_RPC = 'pitch_log_use_lookup';
+
 const SUPABASE_URL = 'https://ydxriywpkkdptwcuqaaj.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlkeHJpeXdwa2tkcHR3Y3VxYWFqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg1Njc5NjYsImV4cCI6MjA5NDE0Mzk2Nn0.SYACMatBKKEZV0Wo3rJ6iPSzt0E14qXjT2DieUsG9Zk';
 
@@ -20,6 +25,35 @@ async function upsertResult(row, accessToken){
   if (!r.ok) {
     const t = await r.text();
     console.log('Supabase upsert failed:', r.status, t);
+  }
+}
+
+// Returns 'ok' | 'no_access' | 'cap_reached' | 'unavailable'. Fails closed.
+async function checkGate(accessToken) {
+  try {
+    const r = await fetch(SUPABASE_URL + '/rest/v1/rpc/' + GATE_RPC, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': SUPABASE_ANON_KEY,
+        'Authorization': 'Bearer ' + accessToken
+      },
+      body: '{}'
+    });
+    if (r.status === 401) return 'no_access';
+    if (!r.ok) {
+      console.log('Gate RPC failed, status:', r.status);
+      return 'unavailable';
+    }
+    let g = (await r.text()).trim();
+    try { g = JSON.parse(g); } catch (e) {}
+    if (typeof g === 'string') g = g.replace(/^"|"$/g, '').trim();
+    if (g === 'ok' || g === 'no_access' || g === 'cap_reached') return g;
+    console.log('Unexpected gate response:', g);
+    return 'unavailable';
+  } catch (err) {
+    console.log('Gate RPC error:', err.message);
+    return 'unavailable';
   }
 }
 
@@ -67,6 +101,26 @@ exports.handler = async function(event) {
   if (!anthropicKey) {
     console.log('ANTHROPIC_API_KEY not configured');
     await upsertResult(failRow(userId, artist, 'Research failed — Anthropic API key not configured.'), accessToken).catch(function(){});
+    return { statusCode: 200, body: '' };
+  }
+
+  // ── Guest-list + daily cap check: nothing paid runs unless this returns 'ok' ──
+  if (typeof artist !== 'string' || artist.length > 100) {
+    console.log('Invalid artist value');
+    return { statusCode: 200, body: '' };
+  }
+  const gate = await checkGate(accessToken);
+  if (gate === 'no_access') {
+    // User isn't on the guest list, so the database would block a result row too. Nothing to write.
+    console.log('Blocked: no_access');
+    return { statusCode: 200, body: '' };
+  }
+  if (gate === 'cap_reached') {
+    await upsertResult(failRow(userId, artist, 'Daily research limit reached (20 per day). Try again tomorrow.'), accessToken).catch(function(){});
+    return { statusCode: 200, body: '' };
+  }
+  if (gate !== 'ok') {
+    await upsertResult(failRow(userId, artist, 'Research is temporarily unavailable. Try again in a moment.'), accessToken).catch(function(){});
     return { statusCode: 200, body: '' };
   }
 
