@@ -148,6 +148,6 @@ exports.handler = async function(event) {
 
   } catch (err) {
     console.log('Caught error:', err.message);
-    return json(500, { error: 'Search failed: ' + err.message });
+    return json(500, { error: 'Search failed. Please try again in a moment.' });
   }
 };
